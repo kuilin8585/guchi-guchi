@@ -93,6 +93,18 @@ body::before{
   display:block;
   image-rendering:pixelated;image-rendering:crisp-edges;
 }
+/* ── ANIMATION LABEL — sits above the canvas, uses the webfont ── */
+.anim-label{
+  position:absolute;top:0;left:0;right:0;
+  padding:3px 5px 2px;
+  background:rgba(0,0,0,0.62);
+  font-family:'Press Start 2P',monospace;
+  font-size:clamp(5px,1.4vw,9px);
+  line-height:1.6;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  z-index:6;
+  pointer-events:none;
+}
 .msg{
   position:absolute;bottom:0;left:0;right:0;
   background:rgba(10,22,4,.93);color:#aadd70;
@@ -334,6 +346,8 @@ body::before{
 .inv-card.ghost{border-color:#2a3858;}
 .inv-card.angel{border-color:#7a6010;}
 .inv-card.alive{border-color:#205820;}
+.inv-card.alive.playable{border-color:#30a830;box-shadow:0 0 4px rgba(48,168,48,0.25);}
+.inv-card.deleting{border-color:#8a1010;box-shadow:0 0 4px rgba(160,20,20,0.3);}
 .inv-card canvas{image-rendering:pixelated;}
 .inv-card .inv-name{color:#6a5a28;text-align:center;line-height:1.5;}
 .inv-card .inv-type{text-align:center;line-height:1.5;}
@@ -486,6 +500,8 @@ function resetForNewPet(){
   G.petId=null;G.petName='';G.pet=null;G.stage='egg';G.mushParts=null;
   G.started=false;G.feedAnim=null;G.playAnim=null;G.bathAnim=null;G.medAnim=null;
   G.lifetimeHappy=0;G.lifetimeTicks=0;G.afterlife=null;
+  clearAnimLabel();
+  const ro=document.getElementById('receiptOverlay');if(ro)ro.remove();
   // Go back to setup screen
   document.getElementById('gameUI').style.display='none';
   document.getElementById('setupOverlay').style.display='flex';
@@ -503,16 +519,21 @@ function openInv(){
   const title=document.getElementById('invTitle');
   grid.innerHTML='';
   const hellCount=OWNER.collection.filter(p=>p.type==='hell').length;
-  title.textContent=hellCount>=4?'★ BAND ASSEMBLED! ★':'OWNER\'S COLLECTION';
+  const bandReady=hellCount>=4&&hellCount%4===0;
+  title.textContent=bandReady?'★ BAND ASSEMBLED! ★':'OWNER\'S COLLECTION';
+
+  // Remove any stale concert button before rebuilding
+  const oldBandBtn=document.getElementById('bandConcertBtn');
+  if(oldBandBtn) oldBandBtn.remove();
+
   if(OWNER.collection.length===0){empty.style.display='';overlay.style.display='flex';return;}
   empty.style.display='none';
-  OWNER.collection.forEach(entry=>{
+  OWNER.collection.forEach((entry,idx)=>{
     const card=document.createElement('div');
-    card.className='inv-card '+entry.type;
-    const cv=document.createElement('canvas');cv.width=18;cv.height=18;
+    card.className='inv-card '+entry.type+(entry.type==='alive'&&entry.liveState?' playable':'');
     const pet=PETS.find(p=>p.id===entry.petId)||PETS[0];
+    const cv=document.createElement('canvas');cv.width=18;cv.height=18;
     if(entry.type==='alive'){
-      // draw small live pet preview
       const c2=cv.getContext('2d');c2.imageSmoothingEnabled=false;
       buildPreviewOnCtx(pet,c2);
     } else {
@@ -524,12 +545,90 @@ function openInv(){
     const typeLabel={alive:'ALIVE',angel:'ANGEL',ghost:'SPIRIT',hell:'HELL'}[entry.type]||entry.type.toUpperCase();
     tp.textContent=typeLabel+' '+entry.age;
     card.appendChild(cv);card.appendChild(nm);card.appendChild(tp);
+    // PLAY button for alive pets that have a saved live state
+    if(entry.type==='alive'&&entry.liveState){
+      const playBtn=document.createElement('button');
+      playBtn.textContent='▶ PLAY';
+      playBtn.style.cssText='width:100%;margin-top:2px;padding:2px 0;font-family:\'Press Start 2P\',monospace;font-size:clamp(3px,0.65vw,4.5px);background:#204820;border:1px solid #082808;border-radius:3px;color:#70e870;cursor:pointer;box-shadow:0 1px 0 #041404;';
+      playBtn.onmouseenter=()=>{playBtn.style.background='#306830';};
+      playBtn.onmouseleave=()=>{playBtn.style.background='#204820';};
+      playBtn.onclick=(e)=>{e.stopPropagation();swapToPet(idx);};
+      card.appendChild(playBtn);
+    }
+    // DELETE button — available on every card
+    const delBtn=document.createElement('button');
+    delBtn.textContent='✕ RELEASE';
+    delBtn.style.cssText='width:100%;margin-top:2px;padding:2px 0;font-family:\'Press Start 2P\',monospace;font-size:clamp(3px,0.6vw,4px);background:#1a0808;border:1px solid #4a1010;border-radius:3px;color:#804040;cursor:pointer;';
+    delBtn.onmouseenter=()=>{delBtn.style.background='#2a0c0c';delBtn.style.color='#c06060';};
+    delBtn.onmouseleave=()=>{delBtn.style.background='#1a0808';delBtn.style.color='#804040';};
+    delBtn.onclick=(e)=>{e.stopPropagation();showDeleteConfirm(idx,card);};
+    card.appendChild(delBtn);
     grid.appendChild(card);
   });
+
+  // If band is assembled, inject the concert button above the close button
+  if(bandReady){
+    const hellPets=OWNER.collection.filter(p=>p.type==='hell').slice(-4);
+    const bandBtn=document.createElement('button');
+    bandBtn.id='bandConcertBtn';
+    bandBtn.textContent='🎸 ROCK CONCERT!';
+    bandBtn.style.cssText='width:100%;padding:9px;font-family:\'Press Start 2P\',monospace;font-size:clamp(5px,1.2vw,8px);background:#5a0808;border:2px solid #8a1818;border-radius:6px;color:#ff8080;cursor:pointer;box-shadow:0 3px 0 #300404;';
+    bandBtn.onmouseenter=()=>{bandBtn.style.background='#7a1010';};
+    bandBtn.onmouseleave=()=>{bandBtn.style.background='#5a0808';};
+    bandBtn.onclick=()=>{
+      closeInv();
+      showConcertPrompt(hellPets);
+    };
+    // Insert before the close button
+    const closeBtn=document.querySelector('#invOverlay .inv-close');
+    if(closeBtn) closeBtn.parentNode.insertBefore(bandBtn,closeBtn);
+    else document.querySelector('.inv-box').appendChild(bandBtn);
+  }
+
   overlay.style.display='flex';
 }
 
 function closeInv(){document.getElementById('invOverlay').style.display='none';}
+
+// ── DELETE FROM COLLECTION ────────────────────────────────────────────────
+// Shows an inline confirmation row inside the card before removing.
+function deleteFromCollection(idx){
+  OWNER.collection.splice(idx,1);
+  updateInvBtn();
+  openInv(); // re-render the whole inventory in place
+}
+
+function showDeleteConfirm(idx, cardEl){
+  // Remove any other open confirmations first
+  document.querySelectorAll('.del-confirm').forEach(el=>el.remove());
+  document.querySelectorAll('.inv-card').forEach(c=>c.classList.remove('deleting'));
+
+  cardEl.classList.add('deleting');
+  const row=document.createElement('div');
+  row.className='del-confirm';
+  row.style.cssText='width:100%;display:flex;gap:2px;margin-top:2px;';
+
+  const yes=document.createElement('button');
+  yes.textContent='✕ YES';
+  yes.style.cssText='flex:1;padding:2px 0;font-family:\'Press Start 2P\',monospace;font-size:clamp(3px,0.6vw,4px);background:#5a0808;border:1px solid #8a1010;border-radius:3px;color:#ff8080;cursor:pointer;';
+  yes.onmouseenter=()=>{yes.style.background='#7a1010';};
+  yes.onmouseleave=()=>{yes.style.background='#5a0808';};
+  yes.onclick=(e)=>{e.stopPropagation();deleteFromCollection(idx);};
+
+  const no=document.createElement('button');
+  no.textContent='NO';
+  no.style.cssText='flex:1;padding:2px 0;font-family:\'Press Start 2P\',monospace;font-size:clamp(3px,0.6vw,4px);background:#1a1208;border:1px solid #3a2208;border-radius:3px;color:#6a5020;cursor:pointer;';
+  no.onmouseenter=()=>{no.style.background='#2a1e0a';};
+  no.onmouseleave=()=>{no.style.background='#1a1208';};
+  no.onclick=(e)=>{
+    e.stopPropagation();
+    row.remove();
+    cardEl.classList.remove('deleting');
+  };
+
+  row.appendChild(yes);row.appendChild(no);
+  cardEl.appendChild(row);
+}
 
 function updateInvBtn(){
   const btn=document.getElementById('invBtn');
@@ -591,6 +690,24 @@ let gc,gx;
 function px(x,y,c){if(x<0||x>=72||y<0||y>=55)return;gx.fillStyle=c;gx.fillRect(x,y,1,1);}
 function rect(x,y,w,h,c){gx.fillStyle=c;gx.fillRect(x,y,w,h);}
 function clr(){gx.fillStyle='#8db06b';gx.fillRect(0,0,72,55);}
+
+// ── Animation label helpers — HTML overlay for crisp webfont text ──────────
+function setAnimLabel(text, color){
+  let el=document.getElementById('animLabel');
+  if(!el){
+    el=document.createElement('div');
+    el.id='animLabel';
+    el.className='anim-label';
+    const wrap=document.getElementById('screenWrap');
+    if(wrap) wrap.appendChild(el);
+  }
+  el.textContent=text;
+  el.style.color=color||'#ffffff';
+}
+function clearAnimLabel(){
+  const el=document.getElementById('animLabel');
+  if(el) el.remove();
+}
 
 function drawEgg(cx,cy){const bob=Math.floor(G.frame/10)%2?-1:0,c=getCols(0);rect(cx-4,cy-8+bob,9,11,c.outline);rect(cx-3,cy-7+bob,7,9,c.body);rect(cx-4,cy-4+bob,1,4,c.body);rect(cx+3,cy-4+bob,1,4,c.body);if(G.eyeOpen){rect(cx-2,cy-5+bob,2,2,c.dark);rect(cx+1,cy-5+bob,2,2,c.dark);}else{rect(cx-2,cy-5+bob,2,1,c.dark);rect(cx+1,cy-5+bob,2,1,c.dark);}px(cx,cy-4+bob,c.dark);if(Math.floor(G.frame/18)%3===1){px(cx-3,cy-9+bob,c.body);px(cx+2,cy-9+bob,c.body);}}
 function drawEars(cx,by,pid,c,ea){if(pid==='shark'){rect(cx-1,by-14+ea,3,8,'#1a3870');rect(cx,by-13+ea,1,6,c.body);px(cx-2,by-9+ea,'#1a3870');px(cx+2,by-9+ea,'#1a3870');}else if(pid==='kockas'){
@@ -1104,16 +1221,13 @@ function drawPlayAnim(){
     }
   }
 
-  // activity label top-left
-  const labels={chicken:'CHICKEN DANCE',class:'SCHOOL TIME',movie:'MOVIE NIGHT',laugh:'LOL!!',games:'GAME ON!'};
-  const lbl=labels[act];
-  gx.fillStyle='rgba(0,0,0,0.5)';gx.fillRect(0,0,72*2,12);
-  gx.fillStyle=act==='chicken'?'#f8d840':act==='class'?'#40d8f8':act==='movie'?'#d840f8':act==='laugh'?'#f84060':'#40f840';
-  gx.font='bold 7px monospace';gx.imageSmoothingEnabled=false;
-  gx.fillText(lbl,4,8*2-2);
+  // activity label — drawn as a crisp HTML overlay, not on the canvas
+  const labelColor=act==='chicken'?'#f8d840':act==='class'?'#40d8f8':act==='movie'?'#d840f8':act==='laugh'?'#f84060':'#40f840';
+  const labelText={chicken:'CHICKEN DANCE',class:'SCHOOL TIME',movie:'MOVIE NIGHT',laugh:'LOL!!',games:'GAME ON!'}[act];
+  setAnimLabel(labelText, labelColor);
 
   pa.frame++;
-  if(pa.frame>=160){G.playAnim=null;}
+  if(pa.frame>=160){G.playAnim=null;clearAnimLabel();}
 }
 // ── BATH / ONSEN SPA animation ─────────────────────────────────────────────
 // 5 stages × ~36 frames each = 180 frames total, then bill screen 60 frames
@@ -1195,8 +1309,7 @@ function drawBathAnim(){
     rect(64,14,1,4,'#a04010');
     rect(61,20,6,6,'#f8a840');px(63,22,'#ffffff');px(64,21,'#ffffff');
     // label
-    gx.fillStyle='rgba(0,0,0,0.55)';gx.fillRect(0,0,144,12);
-    gx.fillStyle='#f0e060';gx.font='bold 7px monospace';gx.fillText('ONSEN SOAK  ¥80',4,14);
+    setAnimLabel('ONSEN SOAK  ¥80', '#f0e060');
   }
 
   else if(stage==='scrub'){
@@ -1233,8 +1346,7 @@ function drawBathAnim(){
       [[-3,-3],[3,-4],[6,-2],[-5,-1]].forEach(([dx,dy])=>px(36+dx,28+dy,'#80b8e0'));
     }
     // label
-    gx.fillStyle='rgba(0,0,0,0.55)';gx.fillRect(0,0,144,12);
-    gx.fillStyle='#40d8f8';gx.font='bold 7px monospace';gx.fillText('BUBBLE SCRUB  ¥45',4,14);
+    setAnimLabel('BUBBLE SCRUB  ¥45', '#40d8f8');
   }
 
   else if(stage==='sauna'){
@@ -1283,8 +1395,7 @@ function drawBathAnim(){
     rect(62,34,6,4,'#e04020');
     px(63,4,'#f0f0f0');px(65,4,'#f0f0f0'); // degree mark
     // label
-    gx.fillStyle='rgba(0,0,0,0.55)';gx.fillRect(0,0,144,12);
-    gx.fillStyle='#f87040';gx.font='bold 7px monospace';gx.fillText('SAUNA  ¥60',4,14);
+    setAnimLabel('SAUNA  ¥60', '#f87040');
   }
 
   else if(stage==='massage'){
@@ -1331,13 +1442,12 @@ function drawBathAnim(){
     });
     // aromatherapy puffs
     if(sf%8<4){px(5,14,'#e0d8f0');px(8,12,'#d0c8e8');px(12,14,'#e0d8f0');}
-    // RELAX text floats
+    // RELAX text floats on canvas (small, decorative — kept as pixel art feel)
     if(Math.floor(sf/12)%2===0){
-      gx.globalAlpha=0.6;gx.fillStyle='#d0c8f0';gx.font='bold 6px monospace';gx.fillText('relax~',88,50);gx.globalAlpha=1;
+      gx.globalAlpha=0.6;gx.fillStyle='#d0c8f0';gx.font='bold 6px monospace';gx.fillText('relax~',44,25);gx.globalAlpha=1;
     }
     // label
-    gx.fillStyle='rgba(0,0,0,0.55)';gx.fillRect(0,0,144,12);
-    gx.fillStyle='#d090f0';gx.font='bold 7px monospace';gx.fillText('MASSAGE  ¥120',4,14);
+    setAnimLabel('MASSAGE  ¥120', '#d090f0');
   }
 
   else if(stage==='facemask'){
@@ -1371,58 +1481,56 @@ function drawBathAnim(){
     rect(55,39,8,2,'#90d890'); // green tea
     // steam from tea
     if(sf%8<4){px(57,36,'#d0d8c0');px(60,35,'#d0d8c0');px(63,36,'#d0d8c0');}
-    // tea label
-    gx.fillStyle='#80a040';gx.font='5px monospace';gx.fillText('TEA',110,82);
+    // tea label (small decorative — 1× canvas coords)
+    gx.fillStyle='#80a040';gx.font='5px monospace';gx.fillText('TEA',55,41);
     // sparkle stars around face
     const sparkF=Math.floor(sf/6)%4;
     [[25,20],[44,20],[24,30],[45,30]].forEach(([sx,sy],i)=>{
       if(i===sparkF){px(sx,sy+bob3,'#f0f060');px(sx+1,sy+bob3,'#f0f060');}
     });
     // label
-    gx.fillStyle='rgba(0,0,0,0.55)';gx.fillRect(0,0,144,12);
-    gx.fillStyle='#80e840';gx.font='bold 7px monospace';gx.fillText('FACE MASK  ¥35',4,14);
+    setAnimLabel('FACE MASK  ¥35', '#80e840');
   }
 
   else if(stage==='bill'){
-    // Bill screen — itemised receipt, coin deducted from score
-    gx.fillStyle='#0a0808';gx.fillRect(0,0,144,110);
-    // receipt paper
-    const py=2,ph=72;
-    rect(10,py,52,ph,'#f8f4e8');
-    rect(10,py,52,4,'#e0d8c0'); // header band
-    // torn edge top
-    for(let i=0;i<52;i+=4){px(10+i,py,'#f0ece0');px(11+i,py-1,'#f8f4e8');}
-    // torn edge bottom
-    for(let i=0;i<52;i+=3){px(10+i,py+ph,'#e0d8c0');px(12+i,py+ph+1,'#f8f4e8');}
-    // SPA heading
-    gx.fillStyle='#3a2a0a';gx.font='bold 8px monospace';gx.fillText('★ SPA ★',24,20);
-    gx.font='5px monospace';gx.fillStyle='#5a4a1a';gx.fillText('LUXURY ONSEN',22,30);
-    // divider
-    rect(12,16,48,1,'#c8b888');
+    // Bill screen — receipt as a crisp HTML overlay
+    gx.fillStyle='#0a0808';gx.fillRect(0,0,72,55);
+    // parchment receipt paper drawn on canvas (just the coloured block)
+    rect(10,2,52,51,'#f8f4e8');
+    rect(10,2,52,3,'#e0d8c0');
+    for(let i=0;i<52;i+=4){px(10+i,2,'#f0ece0');px(11+i,1,'#f8f4e8');}
+    for(let i=0;i<52;i+=3){px(10+i,53,'#e0d8c0');px(12+i,54,'#f8f4e8');}
+    rect(12,10,48,1,'#c8b888');
+    rect(12,35,48,1,'#3a2a0a');
     // single chosen service
     const svc=BATH_SERVICES.find(s=>s.id===chosenScene)||BATH_SERVICES[0];
-    const iy=40;
-    gx.fillStyle='#3a2a0a';gx.font='5px monospace';
-    gx.fillText(svc.name.slice(0,10),13,iy);
-    const dots='........';gx.fillStyle='#a09060';gx.fillText(dots,13+svc.name.slice(0,10).length*3,iy);
-    gx.fillStyle='#3a2a0a';gx.fillText('¥'+svc.price,52-(String(svc.price).length)*3,iy);
-    // total line
-    rect(12,52,48,1,'#3a2a0a');
-    gx.fillStyle='#1a0a00';gx.font='bold 6px monospace';
-    gx.fillText('TOTAL:',14,62);
-    gx.fillStyle='#c83020';gx.fillText('¥'+svc.price,44,62);
-    // coin deducted message
-    if(sf>20){
-      gx.fillStyle='rgba(200,50,20,0.15)';gx.fillRect(20,64,104,12);
-      gx.fillStyle='#c83020';gx.font='bold 6px monospace';
-      gx.fillText('-¥'+svc.price+' CHARGED!',22,74);
+    // Build receipt HTML overlay
+    const charged=sf>20, thanked=sf>30;
+    const receiptHTML=`
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;pointer-events:none;padding-top:4%;z-index:6;font-family:'Press Start 2P',monospace;">
+        <div style="color:#3a2a0a;font-size:clamp(4px,1vw,7px);line-height:2">★ SPA ★</div>
+        <div style="color:#5a4a1a;font-size:clamp(3px,0.7vw,5px);line-height:2">LUXURY ONSEN</div>
+        <div style="width:72%;border-top:1px solid #c8b888;margin:1px 0"></div>
+        <div style="color:#3a2a0a;font-size:clamp(3px,0.7vw,5px);line-height:2.2;display:flex;justify-content:space-between;width:72%">
+          <span>${svc.name}</span><span>¥${svc.price}</span>
+        </div>
+        <div style="width:72%;border-top:1px solid #3a2a0a;margin:1px 0"></div>
+        <div style="color:#1a0a00;font-size:clamp(3px,0.75vw,5.5px);line-height:2.2;display:flex;justify-content:space-between;width:72%">
+          <span>TOTAL</span><span style="color:#c83020">¥${svc.price}</span>
+        </div>
+        ${charged?`<div style="color:#c83020;font-size:clamp(3px,0.7vw,5px);line-height:2">-¥${svc.price} CHARGED!</div>`:''}
+        ${thanked?`<div style="color:#5a7a30;font-size:clamp(3px,0.65vw,4.5px);line-height:2;text-align:center">Thank you!<br>Come again~</div>`:''}
+      </div>`;
+    let receiptEl=document.getElementById('receiptOverlay');
+    if(!receiptEl){
+      receiptEl=document.createElement('div');
+      receiptEl.id='receiptOverlay';
+      receiptEl.style.cssText='position:absolute;inset:0;z-index:6;pointer-events:none;';
+      const wrap=document.getElementById('screenWrap');
+      if(wrap) wrap.appendChild(receiptEl);
     }
-    // thank you
-    if(sf>30){
-      gx.fillStyle='#5a7a30';gx.font='5px monospace';
-      gx.fillText('Thank you!',30,84);
-      gx.fillText('Come again~',28,92);
-    }
+    receiptEl.innerHTML=receiptHTML;
+    setAnimLabel('SPA RECEIPT', '#c8a050');
     // one-time deduction on frame 1 of bill stage
     if(sf===1){
       G.coins=Math.max(0,G.coins-svc.price);
@@ -1431,7 +1539,11 @@ function drawBathAnim(){
   }
 
   ba.frame++;
-  if(ba.frame>=120) G.bathAnim=null;
+  if(ba.frame>=120){
+    G.bathAnim=null;
+    clearAnimLabel();
+    const ro=document.getElementById('receiptOverlay');if(ro)ro.remove();
+  }
 }
 // ── MED animation system ──────────────────────────────────────────────────
 // G.medAnim = { frame, phase, cols }
@@ -2273,8 +2385,8 @@ function drawConcert(cs){
   ctx.fillStyle='#181008';ctx.beginPath();ctx.arc(206,91,3,0,Math.PI*2);ctx.fill();
   ctx.fillStyle='#c04020';ctx.fillRect(200,96,8,3);
 
-  // ── DRUM KIT (center-back) ─────────────────────────────────────────────
-  const dkx=120,dky=80;
+  // ── DRUM KIT (stage right, behind drummer) ────────────────────────────────
+  const dkx=192,dky=80;
   // Bass drum
   ctx.fillStyle='#201008';ctx.beginPath();ctx.ellipse(dkx,dky+14,18,12,0,0,Math.PI*2);ctx.fill();
   ctx.fillStyle='#301810';ctx.beginPath();ctx.ellipse(dkx,dky+14,16,10,0,0,Math.PI*2);ctx.fill();
@@ -2298,8 +2410,8 @@ function drawConcert(cs){
   ctx.fillStyle='#181008';ctx.fillRect(dkx-4,dky+20,8,8);
   ctx.fillStyle='#2a1810';ctx.fillRect(dkx-6,dky+20,12,3);
 
-  // ── MICROPHONE STAND (center-front) ─────────────────────────────────────
-  const mcx=120,mcy=92;
+  // ── MICROPHONE STAND (centre-left, in front of vocalist) ─────────────────
+  const mcx=138,mcy=92;
   ctx.fillStyle='#606060';ctx.fillRect(mcx,mcy,1,14);
   ctx.fillStyle='#808080';ctx.fillRect(mcx-4,mcy+14,9,2);ctx.fillRect(mcx-6,mcy+16,13,2);
   ctx.fillStyle='#606060';ctx.beginPath();ctx.arc(mcx,mcy,4,0,Math.PI*2);ctx.fill();
@@ -2310,33 +2422,24 @@ function drawConcert(cs){
   ctx.beginPath();ctx.moveTo(mcx+1,mcy+4);
   ctx.quadraticCurveTo(mcx+10,mcy+14,mcx+6,mcy+18);ctx.stroke();
 
-  // ── BAND MEMBERS (4 hell ghosts) ────────────────────────────────────────
-  // Positions: guitarist-L, bassist, vocalist (center mic), drummer, guitarist-R
-  // We have 4 members: assign roles
-  const roles=['guitar','bass','vocals','drums'];
-  const positions=[
-    {x:50, y:108, role:'guitar'},   // lead guitarist left
-    {x:88, y:112, role:'bass'},     // bassist
-    {x:120,y:108, role:'vocals'},   // vocalist at mic
-    {x:160,y:108, role:'guitar'},   // rhythm guitarist
-  ];
-  // If 4 members, use all 4; drummer ghost sits behind kit at dkx,dky+16
-  const drummerPos={x:dkx, y:dky+18, role:'drums'};
-
-  // Remap: 4 ghosts = guitar, bass, vocals, drums
-  const memberPositions=[
-    {x:45,  y:106, role:'guitar'},
-    {x:88,  y:110, role:'bass'},
-    {x:120, y:106, role:'vocals'},
-    {x:dkx, y:dky+14, role:'drums'},
+  // ── BAND MEMBERS ─────────────────────────────────────────────────────────
+  // Spread evenly across 240px stage with ~50px gaps between ghost centres.
+  // guitar(38) · bass(86) · vocals(138) · drums(192)
+  // Each ghost body is ~18px wide; instruments extend ~20px to the right,
+  // so there is a comfortable 12-14px clear gap between each member.
+  const ROLES=['guitar','bass','vocals','drums'];
+  const POSITIONS=[
+    {x:38,  y:108},  // lead guitar
+    {x:86,  y:110},  // bass
+    {x:138, y:106},  // vocals — at mic stand (mcx=138)
+    {x:dkx, y:dky+16}, // drums — behind kit (dkx=192)
   ];
 
-  memberPositions.forEach((pos,i)=>{
+  POSITIONS.forEach((pos,i)=>{
     const member=band[i]||band[0];
     const pid=member.petId;
-    const pet=PETS.find(p=>p.id===pid)||PETS[0];
-    const gc=neonBodyCol(pid,member.petName||'');
-    drawConcertGhost(ctx,pos.x,pos.y,pid,gc,f,pos.role,i);
+    const col=neonBodyCol(pid,member.petName||'');
+    drawConcertGhost(ctx,pos.x,pos.y,pid,col,f,ROLES[i],i,member);
   });
 
   // ── AUDIENCE ─────────────────────────────────────────────────────────
@@ -2346,11 +2449,11 @@ function drawConcert(cs){
   const noteF=Math.floor(f/12)%6;
   const noteCols=['#ff4080','#ff8000','#ffff00','#00ff80','#00a8ff','#c040ff'];
   const notePositions=[
-    {x:55,y:80},{x:90,y:76},{x:125,y:72},{x:155,y:78},{x:45,y:68},{x:175,y:70}
+    {x:38,y:80},{x:60,y:74},{x:86,y:78},{x:112,y:72},{x:138,y:76},{x:170,y:70}
   ];
   notePositions.forEach((np,i)=>{
     if(i===noteF||i===(noteF+3)%6){
-      const ny=np.y-((f+i*20)%30);
+      const ny=np.y-((f+i*20)%28);
       ctx.fillStyle=noteCols[i];ctx.font='bold 9px monospace';
       ctx.fillText(['♪','♫','♩','♬','♭','♮'][i],np.x,ny);
     }
@@ -2358,21 +2461,21 @@ function drawConcert(cs){
 
   // ── BAND NAME BANNER ─────────────────────────────────────────────────
   const bannerY=6;
-  ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(40,bannerY-1,160,14);
-  ctx.fillStyle='#c04020';ctx.fillRect(40,bannerY-1,160,1);ctx.fillRect(40,bannerY+13,160,1);
+  ctx.fillStyle='rgba(0,0,0,0.72)';ctx.fillRect(36,bannerY-2,168,16);
+  ctx.fillStyle='#c04020';ctx.fillRect(36,bannerY-2,168,2);ctx.fillRect(36,bannerY+14,168,2);
   // Animated band name
   const bandNames=['THE HELL GHOSTS','★ HARD ROCK ★','RAGE FROM BEYOND'];
   const bn=bandNames[Math.floor(f/120)%bandNames.length];
   ctx.fillStyle=Math.floor(f/8)%2===0?'#ff4020':'#ff8040';
-  ctx.font='bold 7px monospace';
-  ctx.textAlign='center';ctx.fillText(bn,120,bannerY+10);ctx.textAlign='left';
+  ctx.font='bold 8px "Press Start 2P",monospace';
+  ctx.textAlign='center';ctx.fillText(bn,120,bannerY+12);ctx.textAlign='left';
 
   // ── CROWD ENERGY BAR ─────────────────────────────────────────────────
   const energy=Math.min(1,(f%240)/240);
-  ctx.fillStyle='#1a0a04';ctx.fillRect(4,H-8,80,4);
+  ctx.fillStyle='#1a0a04';ctx.fillRect(4,H-10,80,5);
   const ecol=energy>0.8?'#ff4020':energy>0.5?'#ff8020':'#c04020';
-  ctx.fillStyle=ecol;ctx.fillRect(4,H-8,Math.round(80*energy),4);
-  ctx.fillStyle='#606060';ctx.font='4px monospace';ctx.fillText('CROWD ENERGY',4,H-2);
+  ctx.fillStyle=ecol;ctx.fillRect(4,H-10,Math.round(80*energy),5);
+  ctx.fillStyle='#909090';ctx.font='5px "Press Start 2P",monospace';ctx.fillText('ENERGY',4,H-2);
 
   // Beat flash on kick hits (every 16 frames)
   if(f%16<3){
@@ -2381,116 +2484,320 @@ function drawConcert(cs){
 
   // ── CLOSE BUTTON (after 4 seconds / 240 frames) ──────────────────────
   if(f>240){
-    ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(W-52,H-18,50,16);
-    ctx.fillStyle='#c8a050';ctx.font='bold 5px monospace';
-    ctx.fillText('[ CLOSE ]',W-48,H-7);
+    ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(W-60,H-20,58,18);
+    ctx.fillStyle='#c8a050';
+    ctx.font='bold 6px "Press Start 2P",monospace';
+    ctx.textAlign='center';ctx.fillText('TAP TO CLOSE',W-31,H-8);ctx.textAlign='left';
   }
 }
 
-function drawConcertGhost(ctx,cx,cy,pid,col,f,role,idx){
-  // Minimal ghost at concert position with instrument gesture
-  const bob=Math.floor((f+idx*7)/18)%2?-1:1;
+function drawConcertGhost(ctx,cx,cy,pid,col,f,role,idx,bandMember){
+  const glowCol=neonGlowCol(pid, bandMember?bandMember.petName:'');
+  const bob=Math.floor((f+idx*13)/16)%2?-1:1;
   const cy2=cy+bob;
-  const glowCol=neonGlowCol(pid, band&&band[idx]?band[idx].petName:'');
+  const wave=Math.floor((f+idx*7)/10)%3;
 
-  // Ghost body (compact for concert)
+  // ── GHOST BODY ──────────────────────────────────────────────────────────
+  // Main sheet
   ctx.fillStyle=col;
-  ctx.fillRect(cx-5,cy2-12,11,13);
-  ctx.fillRect(cx-6,cy2-8,13,8);
-  ctx.fillRect(cx-4,cy2-14,9,4);
-  ctx.fillRect(cx-3,cy2-15,7,2);
-  // Tendrils (animated)
-  const wave=Math.floor((f+idx*5)/10)%3;
-  ctx.fillRect(cx-6,cy2+1,3,2);ctx.fillRect(cx-2,cy2+2,3,1);ctx.fillRect(cx+2,cy2+1,3,2);
-  if(wave===1){ctx.fillRect(cx-6,cy2+3,2,1);ctx.fillRect(cx+3,cy2+3,2,1);}
+  ctx.fillRect(cx-7,cy2-15,15,17);
+  ctx.fillRect(cx-9,cy2-9,19,11);
+  // Rounded top dome
+  ctx.fillRect(cx-6,cy2-19,13,6);
+  ctx.fillRect(cx-5,cy2-21,11,4);
+  ctx.fillRect(cx-3,cy2-22,7,2);
+  // Wiggly bottom tendrils (3 lobes, animated)
+  ctx.fillRect(cx-9,cy2+2,5,4);
+  ctx.fillRect(cx-3,cy2+3,5,3);
+  ctx.fillRect(cx+3,cy2+2,5,4);
+  if(wave===1){ctx.fillRect(cx-9,cy2+5,3,2);ctx.fillRect(cx+5,cy2+5,3,2);}
+  if(wave===2){ctx.fillRect(cx-3,cy2+5,5,2);}
 
-  // Pet ear feature
+  // Neon glow halo (kept tight to body — cx-10 to cx+10)
+  ctx.globalAlpha=0.13+Math.sin(f*0.08+idx)*0.06;
+  ctx.fillStyle=glowCol;
+  ctx.fillRect(cx-10,cy2-22,20,32);
+  ctx.globalAlpha=1;
+
+  // ── PET-SPECIFIC EARS / FEATURES ────────────────────────────────────────
   if(pid==='shark'){
-    ctx.fillStyle='#b0c8e0';ctx.fillRect(cx-1,cy2-18,3,5);ctx.fillRect(cx,cy2-17,1,3);
+    // Dorsal fin ghost — translucent icy blue
+    ctx.fillStyle='#b0d8ff';
+    ctx.fillRect(cx-2,cy2-28,5,10);
+    ctx.fillRect(cx-1,cy2-26,3,8);
+    ctx.fillRect(cx,cy2-24,2,6);
+    ctx.globalAlpha=0.4;ctx.fillStyle=glowCol;
+    ctx.fillRect(cx-3,cy2-27,7,9);
+    ctx.globalAlpha=1;
+    // Ghost fin tip
+    ctx.fillStyle='#d0eeff';ctx.fillRect(cx,cy2-28,1,4);
   } else if(pid==='rabbit'){
-    ctx.fillStyle=col;ctx.fillRect(cx-4,cy2-20,2,8);ctx.fillRect(cx+2,cy2-20,2,8);
-    ctx.fillStyle=glowCol;ctx.fillRect(cx-3,cy2-19,1,6);ctx.fillRect(cx+2,cy2-19,1,6);
-  } else if(pid==='rilak'||pid==='bear'){
-    ctx.fillStyle=col;ctx.fillRect(cx-5,cy2-15,3,3);ctx.fillRect(cx+2,cy2-15,3,3);
+    // Long tall ears floating upward
+    ctx.fillStyle=col;
+    ctx.fillRect(cx-7,cy2-32,4,16);
+    ctx.fillRect(cx+3,cy2-32,4,16);
+    // Inner ear glow
+    ctx.fillStyle=glowCol;
+    ctx.fillRect(cx-6,cy2-31,2,13);
+    ctx.fillRect(cx+4,cy2-31,2,13);
+    // Ear tips shimmer
+    ctx.globalAlpha=0.6;ctx.fillStyle='#ffffff';
+    ctx.fillRect(cx-7,cy2-33,4,2);ctx.fillRect(cx+3,cy2-33,4,2);
+    ctx.globalAlpha=1;
   } else if(pid==='kockas'){
-    ctx.fillStyle=col;ctx.fillRect(cx-4,cy2-17,2,6);ctx.fillRect(cx+2,cy2-17,2,6);
-    ctx.fillStyle='#ffffff';ctx.globalAlpha=0.4;ctx.fillRect(cx-4,cy2-17,1,5);ctx.fillRect(cx+3,cy2-17,1,5);ctx.globalAlpha=1;
+    // Tall checkered ears
+    ctx.fillStyle=col;
+    ctx.fillRect(cx-7,cy2-30,4,13);
+    ctx.fillRect(cx+3,cy2-30,4,13);
+    // Checkered pattern on ears (semi-transparent)
+    const chk=['#f0f0f0','#222222'];
+    ctx.globalAlpha=0.55;
+    for(let r=0;r<8;r++){
+      ctx.fillStyle=chk[r%2];ctx.fillRect(cx-7,cy2-30+r,2,1);
+      ctx.fillStyle=chk[(r+1)%2];ctx.fillRect(cx-5,cy2-30+r,2,1);
+      ctx.fillStyle=chk[r%2];ctx.fillRect(cx+3,cy2-30+r,2,1);
+      ctx.fillStyle=chk[(r+1)%2];ctx.fillRect(cx+5,cy2-30+r,2,1);
+    }
+    ctx.globalAlpha=1;
+  } else if(pid==='rilak'){
+    // Round fluffy ears
+    ctx.fillStyle=col;
+    ctx.fillRect(cx-9,cy2-22,6,6);
+    ctx.fillRect(cx+3,cy2-22,6,6);
+    ctx.fillStyle=glowCol;
+    ctx.fillRect(cx-8,cy2-21,4,4);
+    ctx.fillRect(cx+4,cy2-21,4,4);
+    // Ear inner dark spots
+    ctx.fillStyle=col;
+    ctx.fillRect(cx-7,cy2-20,2,2);ctx.fillRect(cx+5,cy2-20,2,2);
   } else if(pid==='mush'){
-    const gc3=['#f870f8','#70f8f8','#f8f870'];
-    ctx.fillStyle=gc3[Math.floor(f/6)%3];ctx.globalAlpha=0.7;
-    ctx.fillRect(cx-5,cy2-15,3,3);ctx.fillRect(cx+2,cy2-15,3,3);ctx.globalAlpha=1;
+    // Glitchy flickering chaos ears
+    const gc3=['#f870f8','#70f8f8','#f8f870','#ff4040'];
+    const c1=gc3[Math.floor(f/5)%gc3.length];
+    const c2=gc3[(Math.floor(f/5)+1)%gc3.length];
+    ctx.globalAlpha=0.7+Math.sin(f*0.4)*0.3;
+    ctx.fillStyle=c1;ctx.fillRect(cx-9,cy2-22,5,5);
+    ctx.fillStyle=c2;ctx.fillRect(cx+4,cy2-22,5,5);
+    // Extra glitch pixel bursts
+    ctx.fillStyle=c1;ctx.fillRect(cx-10,cy2-24,2,2);
+    ctx.fillStyle=c2;ctx.fillRect(cx+8,cy2-23,2,2);
+    ctx.globalAlpha=1;
+  } else {
+    // Bear (default) — round ears
+    ctx.fillStyle=col;
+    ctx.fillRect(cx-8,cy2-22,5,5);
+    ctx.fillRect(cx+3,cy2-22,5,5);
+    ctx.fillStyle=glowCol;
+    ctx.fillRect(cx-7,cy2-21,4,4);
+    ctx.fillRect(cx+3,cy2-21,4,4);
   }
 
-  // Angry glowing eyes
-  ctx.fillStyle=glowCol;ctx.fillRect(cx-3,cy2-10,2,2);ctx.fillRect(cx+1,cy2-10,2,2);
-  ctx.fillStyle='#ff2000';ctx.fillRect(cx-2,cy2-9,1,1);ctx.fillRect(cx+2,cy2-9,1,1);
-  // Angry brow
-  const brow=Math.floor(f/8)%2;
-  ctx.fillStyle='#ff6000';
-  ctx.fillRect(cx-4,cy2-12+brow,4,1);ctx.fillRect(cx,cy2-12,4,1);
+  // ── ANGRY GLOWING EYES ──────────────────────────────────────────────────
+  ctx.fillStyle=glowCol;
+  ctx.fillRect(cx-5,cy2-14,3,3);
+  ctx.fillRect(cx+2,cy2-14,3,3);
+  // Red pupils
+  ctx.fillStyle='#ff1000';
+  ctx.fillRect(cx-4,cy2-13,2,2);
+  ctx.fillRect(cx+3,cy2-13,2,2);
+  // Eye shine
+  ctx.fillStyle='#ffffff';
+  ctx.fillRect(cx-4,cy2-14,1,1);
+  ctx.fillRect(cx+3,cy2-14,1,1);
+  // Angry V-brow (animates)
+  const browShift=Math.floor(f/10)%2;
+  ctx.fillStyle='#ff5000';
+  ctx.fillRect(cx-6,cy2-17+browShift,4,2);
+  ctx.fillRect(cx+2,cy2-17,4,2);
+  // Snarl mouth
+  const snarl=Math.floor(f/8)%4;
+  ctx.fillStyle='#000000';
+  ctx.fillRect(cx-4,cy2-9,9,2);
+  if(snarl<2){
+    // teeth showing
+    ctx.fillStyle='#ffffff';
+    ctx.fillRect(cx-3,cy2-9,2,2);ctx.fillRect(cx-1,cy2-9,2,2);
+    ctx.fillRect(cx+1,cy2-9,2,2);ctx.fillRect(cx+3,cy2-9,2,2);
+  }
 
-  // ── INSTRUMENT ───────────────────────────────────────────────────
-  if(role==='guitar'||role==='bass'){
-    const strum=Math.floor((f+idx*11)/6)%4;
-    const armY=strum<2?-1:1;
-    // Guitar body
-    ctx.fillStyle='#8a1808';
-    ctx.fillRect(cx+4,cy2-8,8,6);ctx.fillRect(cx+5,cy2-10,6,3);ctx.fillRect(cx+5,cy2-2,6,2);
-    // Guitar neck
-    ctx.fillStyle='#604010';ctx.fillRect(cx+4,cy2-16,2,10);
-    // Strings
-    ctx.fillStyle='#c8c8c8';
-    for(let s=0;s<3;s++) ctx.fillRect(cx+5+s,cy2-15,1,9);
-    // Arm strumming
-    ctx.fillStyle=col;ctx.fillRect(cx+3,cy2-7+armY,6,2);
-    // Pick flash
-    if(strum===1){ctx.fillStyle='#f8f040';ctx.fillRect(cx+8,cy2-5+armY,2,2);}
-    // Headstock tuning pegs
+  // ── INSTRUMENTS ─────────────────────────────────────────────────────────
+  if(role==='guitar'){
+    const strum=Math.floor((f+idx*17)/5)%6;
+    const armSwing=strum<3?-2:2;
+    // Guitar body — Les Paul shape
+    ctx.fillStyle='#901808';
+    ctx.fillRect(cx+5,cy2-10,11,9);
+    ctx.fillRect(cx+6,cy2-13,9,5);
+    ctx.fillRect(cx+6,cy2-1,9,4);
+    ctx.fillRect(cx+5,cy2-14,4,3); // upper bout
+    ctx.fillRect(cx+5,cy2,4,3);   // lower bout curve
+    // Sunburst detail
+    ctx.fillStyle='#c03010';
+    ctx.fillRect(cx+7,cy2-12,6,2);
+    ctx.fillRect(cx+7,cy2-3,6,2);
+    // Binding stripe
+    ctx.fillStyle='#f0c870';
+    ctx.fillRect(cx+5,cy2-14,1,17);ctx.fillRect(cx+15,cy2-13,1,15);
+    // Pickups
+    ctx.fillStyle='#1a1008';
+    ctx.fillRect(cx+7,cy2-9,6,2);ctx.fillRect(cx+7,cy2-6,6,2);
+    // Guitar neck going up-left
+    ctx.fillStyle='#704010';
+    ctx.fillRect(cx-4,cy2-18,5,16);
+    // Fret markers
+    ctx.fillStyle='#f0e8d0';
+    [cy2-16,cy2-13,cy2-10,cy2-7].forEach(fy=>ctx.fillRect(cx-2,fy,2,1));
+    // Strings (6 strings)
+    ctx.fillStyle='#d0d0d0';
+    for(let s=0;s<4;s++) ctx.fillRect(cx-3+s,cy2-18,1,14);
+    ctx.fillStyle='#e8e8e8';
+    for(let s=0;s<2;s++) ctx.fillRect(cx+s,cy2-18,1,14);
+    // Headstock
+    ctx.fillStyle='#704010';ctx.fillRect(cx-6,cy2-22,5,5);
     ctx.fillStyle='#c8a030';
-    ctx.fillRect(cx+3,cy2-17,1,2);ctx.fillRect(cx+5,cy2-18,1,2);
-  } else if(role==='vocals'){
-    // Hold mic, mouth open wide
-    ctx.fillStyle='#808080';ctx.fillRect(cx+5,cy2-10,2,7);
-    ctx.fillStyle='#a0a0a0';ctx.beginPath();ctx.arc(cx+6,cy2-11,3,0,Math.PI*2);ctx.fill();
-    // Mouth open on beat
-    const mbeat=Math.floor(f/8)%4;
-    ctx.fillStyle='#ff4060';ctx.fillRect(cx-2,cy2-6,5,mbeat<2?2:3);
-    // Vocal waves
-    if(mbeat===1||mbeat===3){
-      ctx.globalAlpha=0.6;ctx.fillStyle='#ff8080';
-      ctx.fillRect(cx-1,cy2-9,3,1);ctx.fillRect(cx-2,cy2-11,1,1);
-      ctx.globalAlpha=1;
-    }
-    // Free arm raised
-    const armRaise=Math.floor(f/10)%3;
-    ctx.fillStyle=col;ctx.fillRect(cx-6,cy2-10-armRaise,4,2);
-  } else if(role==='drums'){
-    // Drumstick action
-    const hit=Math.floor((f+idx*3)/4)%8;
-    const stickY=hit<4?-2:2;
-    ctx.fillStyle='#c8a060';
-    ctx.fillRect(cx-8,cy2-10+stickY,2,8);  // left stick
-    ctx.fillRect(cx+6,cy2-8-stickY,2,8);   // right stick
-    // Hit flash on snare
-    if(hit===3){
+    [cy2-22,cy2-20].forEach(ty=>{ctx.fillRect(cx-6,ty,2,1);ctx.fillRect(cx-3,ty,2,1);});
+    // Strumming arm
+    ctx.fillStyle=col;
+    ctx.fillRect(cx+3,cy2-8+armSwing,6,3);
+    // Pick flash
+    if(strum===2||strum===5){
+      ctx.fillStyle='#ffe040';
+      ctx.fillRect(cx+8,cy2-6+armSwing,3,3);
+      // pick spark
       ctx.globalAlpha=0.8;ctx.fillStyle='#ffffff';
-      ctx.beginPath();ctx.arc(cx-8,cy2-3,3,0,Math.PI*2);ctx.fill();
+      ctx.fillRect(cx+10,cy2-8+armSwing,2,2);
       ctx.globalAlpha=1;
     }
-    // Hit flash on cymbal
-    if(hit===7){
-      ctx.globalAlpha=0.8;ctx.fillStyle='#f8e040';
-      ctx.beginPath();ctx.arc(cx+22,cy2-22,5,0,Math.PI*2);ctx.fill();
+    // Power chord energy wave on big strum (contained within ~cx+24)
+    if(strum===0){
+      ctx.globalAlpha=0.3;ctx.fillStyle=glowCol;
+      ctx.fillRect(cx+12,cy2-12,6,10);ctx.fillRect(cx+17,cy2-14,5,14);
       ctx.globalAlpha=1;
+    }
+
+  } else if(role==='bass'){
+    const pluck=Math.floor((f+idx*23)/7)%5;
+    // Bass body — Fender Precision shape (bigger, rounder)
+    ctx.fillStyle='#1a4888';
+    ctx.fillRect(cx+5,cy2-11,12,10);
+    ctx.fillRect(cx+6,cy2-14,10,5);
+    ctx.fillRect(cx+6,cy2-1,10,5);
+    ctx.fillRect(cx+4,cy2-13,4,4); // cutaway
+    // Sunburst gradient effect
+    ctx.fillStyle='#2860a8';
+    ctx.fillRect(cx+8,cy2-12,7,2);ctx.fillRect(cx+8,cy2-4,7,2);
+    // Binding
+    ctx.fillStyle='#ffffff';
+    ctx.fillRect(cx+5,cy2-14,1,18);ctx.fillRect(cx+16,cy2-13,1,16);
+    // Pickguard
+    ctx.fillStyle='#0a0a0a';ctx.fillRect(cx+6,cy2-10,8,7);
+    // Pickup (single coil)
+    ctx.fillStyle='#404040';ctx.fillRect(cx+7,cy2-8,6,3);
+    // Bass neck (longer, thicker)
+    ctx.fillStyle='#603808';
+    ctx.fillRect(cx-6,cy2-20,6,18);
+    // Frets
+    ctx.fillStyle='#e0e0d0';
+    [cy2-19,cy2-16,cy2-13,cy2-10,cy2-7].forEach(fy=>ctx.fillRect(cx-6,fy,6,1));
+    // 4 fat strings
+    ctx.fillStyle='#c0a820';
+    for(let s=0;s<4;s++) ctx.fillRect(cx-5+s,cy2-20,1,16);
+    // Headstock
+    ctx.fillStyle='#603808';ctx.fillRect(cx-8,cy2-24,6,6);
+    ctx.fillStyle='#b08020';
+    [cy2-24,cy2-21].forEach(ty=>{ctx.fillRect(cx-8,ty,2,1);ctx.fillRect(cx-5,ty,2,1);});
+    // Plucking fingers (two fingers alternating)
+    ctx.fillStyle=col;
+    const fingerUp=pluck<2?-2:1;
+    ctx.fillRect(cx+4,cy2-7+fingerUp,4,2);
+    ctx.fillRect(cx+4,cy2-4-(pluck%2),4,2);
+    // String vibration (contained within ~cx+22)
+    if(pluck===0||pluck===2){
+      ctx.globalAlpha=0.5;ctx.fillStyle=glowCol;
+      ctx.fillRect(cx+17,cy2-10,6,8);ctx.fillRect(cx+21,cy2-12,4,12);
+      ctx.globalAlpha=1;
+    }
+
+  } else if(role==='vocals'){
+    // Microphone — large handheld
+    ctx.fillStyle='#707070';ctx.fillRect(cx+5,cy2-14,4,12);
+    ctx.fillStyle='#909090';ctx.fillRect(cx+6,cy2-15,2,2);
+    // Mic head (grille ball)
+    ctx.fillStyle='#606060';
+    ctx.beginPath();ctx.arc(cx+7,cy2-17,5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#909090';
+    ctx.beginPath();ctx.arc(cx+7,cy2-17,4,0,Math.PI*2);ctx.fill();
+    // Grille dots
+    ctx.fillStyle='#484848';
+    for(let gx2=-2;gx2<=2;gx2++) for(let gy2=-2;gy2<=2;gy2++){
+      if(gx2*gx2+gy2*gy2<=5) ctx.fillRect(cx+7+gx2,cy2-17+gy2,1,1);
+    }
+    // Holding arm
+    ctx.fillStyle=col;ctx.fillRect(cx+3,cy2-10,5,3);
+    // Mouth wide open on beat — animates in sync
+    const beat=Math.floor(f/7)%4;
+    const mh=beat===0?4:beat===1?5:beat===2?3:4;
+    ctx.fillStyle='#cc1030';ctx.fillRect(cx-5,cy2-8,10,mh);
+    // Teeth top row
+    ctx.fillStyle='#ffffff';ctx.fillRect(cx-4,cy2-8,8,2);
+    // Uvula
+    if(beat>1){ctx.fillStyle='#aa1040';ctx.fillRect(cx,cy2-7,2,2);}
+    // Vocal ripple waves going left
+    if(beat===0||beat===2){
+      ctx.globalAlpha=0.5;
+      [8,14,20].forEach((d,i)=>{
+        ctx.fillStyle=glowCol;
+        ctx.fillRect(cx-5-d,cy2-9+i,d,1);
+      });
+      ctx.globalAlpha=1;
+    }
+    // Free arm raised overhead, pumping fist
+    const pump=Math.floor(f/9)%3;
+    ctx.fillStyle=col;
+    ctx.fillRect(cx-11,cy2-14-pump,5,3);
+    ctx.fillRect(cx-13,cy2-17-pump,4,4); // fist
+
+  } else if(role==='drums'){
+    // Drumsticks — offset timing for left/right
+    const hitL=Math.floor((f+idx*3)/4)%8;
+    const hitR=Math.floor((f+idx*3+4)/4)%8;
+    // Left stick
+    ctx.fillStyle='#c8a060';
+    const lyOff=hitL<4?-4:3;
+    ctx.fillRect(cx-12,cy2-14+lyOff,2,11);
+    ctx.fillRect(cx-11,cy2-14+lyOff,1,2); // tip
+    // Right stick  
+    ctx.fillStyle='#c8a060';
+    const ryOff=hitR<4?3:-4;
+    ctx.fillRect(cx+9,cy2-12+ryOff,2,11);
+    ctx.fillRect(cx+9,cy2-13+ryOff,1,2);
+    // Snare hit flash (left)
+    if(hitL===3){
+      ctx.globalAlpha=0.9;ctx.fillStyle='#ffffff';
+      ctx.beginPath();ctx.arc(cx-11,cy2-3,4,0,Math.PI*2);ctx.fill();
+      ctx.globalAlpha=1;
+    }
+    // Cymbal hit flash (right)
+    if(hitR===3){
+      ctx.globalAlpha=0.9;ctx.fillStyle='#f8e040';
+      ctx.beginPath();ctx.arc(cx+24,cy2-20,6,0,Math.PI*2);ctx.fill();
+      ctx.globalAlpha=1;
+    }
+    // Kick drum pedal pump
+    const kick=Math.floor(f/8)%4;
+    if(kick===0||kick===1){
+      ctx.fillStyle=col;ctx.fillRect(cx-4,cy2+4,5,3); // foot down
     }
   }
 
-  // Name tag (tiny, below ghost)
-  const member=band&&band[idx];
-  if(member){
-    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(cx-10,cy2+5,20,7);
-    ctx.fillStyle='#c04020';ctx.font='4px monospace';ctx.textAlign='center';
-    ctx.fillText(member.petName.slice(0,6),cx,cy2+11);ctx.textAlign='left';
+  // ── NAME TAG ───────────────────────────────────────────────────────────
+  if(bandMember){
+    ctx.fillStyle='rgba(0,0,0,0.72)';ctx.fillRect(cx-12,cy2+8,24,9);
+    ctx.fillStyle=glowCol;
+    ctx.font='bold 6px "Press Start 2P",monospace';
+    ctx.textAlign='center';
+    ctx.fillText(bandMember.petName.slice(0,5).toUpperCase(),cx,cy2+16);
+    ctx.textAlign='left';
   }
 }
 
@@ -2739,429 +3046,111 @@ function startGame(){
   updateBgm();
 }
 
+function snapLiveState(){
+  // Capture full live game state for storage in collection
+  return {
+    hunger:G.hunger, happy:G.happy, clean:G.clean, energy:G.energy,
+    age:G.age, ticks:G.ticks, hearts:G.hearts, score:G.score, coins:G.coins,
+    sick:G.sick, sickTimer:G.sickTimer, sleeping:G.sleeping,
+    lifetimeHappy:G.lifetimeHappy, lifetimeTicks:G.lifetimeTicks,
+    mushParts:G.mushParts,
+  };
+}
+
 function collectPet(){
   if(!G.started) return;
   ensureAudio();SFX.collect();
+  const isAlive = !G.afterlife;
   const entry={
     petId:G.petId,
     petName:G.petName,
     type: G.afterlife ? G.afterlife.type : 'alive',
     age: G.age,
     earlyDeath: G.afterlife ? !!G.afterlife.earlyDeath : false,
+    liveState: isAlive ? snapLiveState() : null,
   };
   OWNER.collection.push(entry);
   const hellCount=OWNER.collection.filter(p=>p.type==='hell').length;
-  if(hellCount>=4){
+  if(hellCount>=4&&hellCount%4===0){
+    // Show the concert prompt before resetting, so the player can choose
+    // to trigger the rock concert now or save it for later.
     const hellPets=OWNER.collection.filter(p=>p.type==='hell').slice(-4);
-    setTimeout(()=>startConcert(hellPets),400);
-  }
-  resetForNewPet();
-}
-
-function startConcert(bandPets){
-  ensureAudio();SFX.concert();
-  const ov=document.getElementById('concertOverlay');
-  const cv=document.getElementById('concertCanvas');
-  if(!ov||!cv) return;
-  const scale=Math.min(Math.floor(window.innerWidth/240),Math.floor(window.innerHeight/160),4)||1;
-  cv.style.width=(240*scale)+'px';cv.style.height=(160*scale)+'px';
-  ov.style.display='flex';
-  concertState={frame:0,band:bandPets,cx:cv.getContext('2d')};
-  concertState.cx.imageSmoothingEnabled=false;
-  function tick(){
-    drawConcert(concertState);
-    concertState.frame++;
-    concertRaf=requestAnimationFrame(tick);
-  }
-  setTimeout(()=>{_currentBgmKey=null;updateBgm();},600);
-  tick();
-}
-
-function endConcert(){
-  if(concertRaf) cancelAnimationFrame(concertRaf);
-  concertRaf=null;concertState=null;
-  document.getElementById('concertOverlay').style.display='none';
-  stopBgm();_currentBgmKey=null;
-  setTimeout(()=>updateBgm(),200);
-}
-
-function tryCollectLive(){
-  if(!G.started||G.afterlife) return;
-  showCollectUI();
-}
-
-
-// ══════════════════════════════════════════════════════════════════════════
-// MIDI-STYLE SOUND ENGINE  (Web Audio API — no external deps)
-// ══════════════════════════════════════════════════════════════════════════
-
-let AC=null;          // AudioContext — created on first interaction
-let masterGain=null;  // master volume node
-let bgmNode=null;     // current background music scheduler timeout id
-let bgmSeq=null;      // current sequence descriptor
-let sfxMuted=false;   // toggled by the 🔊 button
-const NOTE={         // MIDI note → frequency
-  C3:130.81,D3:146.83,E3:164.81,F3:174.61,G3:196,A3:220,B3:246.94,
-  C4:261.63,D4:293.66,E4:329.63,F4:349.23,G4:392,A4:440,B4:493.88,
-  C5:523.25,D5:587.33,E5:659.25,F5:698.46,G5:783.99,A5:880,B5:987.77,
-  C6:1046.5,D6:1174.66,E6:1318.5,
-  Bb3:233.08,Eb4:311.13,Ab4:415.30,Bb4:466.16,Eb5:622.25,Ab5:830.61,
-  F2:87.31,G2:98,A2:110,B2:123.47,
-};
-
-function initAudio(){
-  if(AC) return;
-  AC=new(window.AudioContext||window.webkitAudioContext)();
-  masterGain=AC.createGain();
-  masterGain.gain.value=sfxMuted?0:0.22;
-  masterGain.connect(AC.destination);
-}
-
-// ── Low-level tone helpers ────────────────────────────────────────────────
-
-function playTone(freq,dur,vol,type,startTime,detune){
-  if(!AC||sfxMuted) return;
-  const t=startTime||AC.currentTime;
-  const o=AC.createOscillator();
-  const g=AC.createGain();
-  o.type=type||'square';
-  o.frequency.setValueAtTime(freq,t);
-  if(detune) o.detune.setValueAtTime(detune,t);
-  // Envelope: attack 5ms, hold, release 30ms
-  g.gain.setValueAtTime(0,t);
-  g.gain.linearRampToValueAtTime(vol,t+0.005);
-  g.gain.setValueAtTime(vol,t+dur-0.03);
-  g.gain.linearRampToValueAtTime(0,t+dur);
-  o.connect(g);g.connect(masterGain);
-  o.start(t);o.stop(t+dur+0.01);
-}
-
-function playDrum(type,startTime){
-  if(!AC||sfxMuted) return;
-  const t=startTime||AC.currentTime;
-  if(type==='kick'){
-    const o=AC.createOscillator(),g=AC.createGain();
-    o.type='sine';o.frequency.setValueAtTime(150,t);
-    o.frequency.exponentialRampToValueAtTime(40,t+0.12);
-    g.gain.setValueAtTime(0.6,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.18);
-    o.connect(g);g.connect(masterGain);o.start(t);o.stop(t+0.2);
-  } else if(type==='snare'){
-    const buf=AC.createBuffer(1,AC.sampleRate*0.12,AC.sampleRate);
-    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1);
-    const src=AC.createBufferSource(),g=AC.createGain();
-    const filt=AC.createBiquadFilter();filt.type='bandpass';filt.frequency.value=3500;
-    src.buffer=buf;g.gain.setValueAtTime(0.25,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.12);
-    src.connect(filt);filt.connect(g);g.connect(masterGain);src.start(t);src.stop(t+0.13);
-  } else if(type==='hihat'){
-    const buf=AC.createBuffer(1,AC.sampleRate*0.05,AC.sampleRate);
-    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1);
-    const src=AC.createBufferSource(),g=AC.createGain();
-    const filt=AC.createBiquadFilter();filt.type='highpass';filt.frequency.value=8000;
-    src.buffer=buf;g.gain.setValueAtTime(0.12,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.05);
-    src.connect(filt);filt.connect(g);g.connect(masterGain);src.start(t);src.stop(t+0.06);
-  } else if(type==='cymbal'){
-    const buf=AC.createBuffer(1,AC.sampleRate*0.3,AC.sampleRate);
-    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1);
-    const src=AC.createBufferSource(),g=AC.createGain();
-    const filt=AC.createBiquadFilter();filt.type='highpass';filt.frequency.value=6000;
-    src.buffer=buf;g.gain.setValueAtTime(0.18,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.3);
-    src.connect(filt);filt.connect(g);g.connect(masterGain);src.start(t);src.stop(t+0.32);
+    resetForNewPet();
+    showConcertPrompt(hellPets);
+  } else {
+    resetForNewPet();
   }
 }
 
-// ── SFX library ───────────────────────────────────────────────────────────
+// ── SWAP TO COLLECTED PET ─────────────────────────────────────────────────
+// Called when the player taps PLAY on an alive card in the inventory.
+// Saves the currently active pet (if any) back into the collection,
+// then loads the chosen pet's live state and resumes gameplay.
+function swapToPet(idx){
+  const entry=OWNER.collection[idx];
+  if(!entry||entry.type!=='alive'||!entry.liveState) return;
+  ensureAudio();SFX.btn();
+  closeInv();
 
-const SFX={
-  btn:()=>{
-    playTone(NOTE.G5,0.04,0.15,'square');
-    playTone(NOTE.C6,0.06,0.12,'square',AC.currentTime+0.04);
-  },
-  feed:()=>{
-    [NOTE.C5,NOTE.E5,NOTE.G5,NOTE.C6].forEach((f,i)=>
-      playTone(f,0.09,0.13,'triangle',AC.currentTime+i*0.07));
-  },
-  play:()=>{
-    [NOTE.C5,NOTE.E5,NOTE.G5,NOTE.E5,NOTE.C6].forEach((f,i)=>
-      playTone(f,0.08,0.14,'square',AC.currentTime+i*0.06));
-  },
-  bath:()=>{
-    // gentle bubble arp
-    [NOTE.G4,NOTE.B4,NOTE.D5,NOTE.G5].forEach((f,i)=>
-      playTone(f,0.12,0.10,'sine',AC.currentTime+i*0.09));
-  },
-  sleep:()=>{
-    playTone(NOTE.G4,0.2,0.08,'sine');
-    playTone(NOTE.E4,0.3,0.07,'sine',AC.currentTime+0.18);
-    playTone(NOTE.C4,0.5,0.06,'sine',AC.currentTime+0.44);
-  },
-  sick:()=>{
-    playTone(NOTE.C5,0.08,0.12,'sawtooth');
-    playTone(NOTE.Bb3,0.16,0.10,'sawtooth',AC.currentTime+0.08);
-  },
-  med:()=>{
-    [NOTE.C5,NOTE.G5,NOTE.C6].forEach((f,i)=>
-      playTone(f,0.07,0.14,'square',AC.currentTime+i*0.08));
-  },
-  levelUp:()=>{
-    [NOTE.C5,NOTE.E5,NOTE.G5,NOTE.C6,NOTE.E6].forEach((f,i)=>
-      playTone(f,0.12,0.18,'square',AC.currentTime+i*0.08));
-  },
-  death:()=>{
-    [NOTE.C5,NOTE.B4,NOTE.Bb3,NOTE.A3,NOTE.G3].forEach((f,i)=>
-      playTone(f,0.14,0.16,'sawtooth',AC.currentTime+i*0.1));
-  },
-  angel:()=>{
-    // ascending harp gliss
-    [NOTE.C5,NOTE.E5,NOTE.G5,NOTE.C6,NOTE.E6].forEach((f,i)=>{
-      playTone(f,0.2,0.14,'sine',AC.currentTime+i*0.1);
-      playTone(f*2,0.1,0.06,'sine',AC.currentTime+i*0.1+0.04);
-    });
-  },
-  hell:()=>{
-    // descending evil chord
-    [NOTE.C5,NOTE.Eb4,NOTE.A3,NOTE.F2].forEach((f,i)=>
-      playTone(f,0.25,0.18,'sawtooth',AC.currentTime+i*0.08));
-    setTimeout(()=>{
-      playDrum('kick');
-      playTone(NOTE.F2,0.4,0.2,'sawtooth',AC.currentTime+0.02);
-    },300);
-  },
-  collect:()=>{
-    playTone(NOTE.G5,0.05,0.15,'square');
-    playTone(NOTE.C6,0.05,0.15,'square',AC.currentTime+0.05);
-    playTone(NOTE.E6,0.12,0.18,'square',AC.currentTime+0.10);
-  },
-  concert:()=>{
-    // power chord crash
-    [NOTE.E3,NOTE.B3,NOTE.E4,NOTE.G4].forEach((f,i)=>{
-      playTone(f,0.4,0.18,'sawtooth',AC.currentTime+i*0.015);
-    });
-    playDrum('kick');playDrum('cymbal',AC.currentTime+0.02);
-  },
-};
-
-// ── Background Music Sequencer ────────────────────────────────────────────
-// Each theme is an array of {notes:[{f,dur,vol,type}], bpm, repeat}
-
-const BPM_NORMAL=140, BPM_ANGEL=80, BPM_HELL=160, BPM_CONCERT=180;
-
-// Helper: schedule a sequence of step-time notes onto the master gain
-// Returns a cancel function
-function scheduleSeq(steps, bpm, loop, onBar){
-  if(!AC) return ()=>{};
-  const secPerBeat=60/bpm;
-  let cancelled=false;
-  let loopTimeout=null;
-
-  function runLoop(){
-    if(cancelled) return;
-    let t=AC.currentTime+0.05; // small lookahead
-    steps.forEach(step=>{
-      const dur=step.dur*secPerBeat;
-      if(step.drum){
-        // schedule drum hit via timeout (imprecise but fine for BGM feel)
-        const delay=(t-AC.currentTime)*1000;
-        if(!cancelled) setTimeout(()=>{ if(!cancelled&&!sfxMuted) playDrum(step.drum); }, Math.max(0,delay));
-      } else if(step.notes){
-        step.notes.forEach(n=>{
-          if(!cancelled) playTone(n.f, dur*0.85, n.v||0.08, n.t||'square', t, n.det||0);
-        });
-      }
-      t+=dur;
-    });
-    if(loop&&!cancelled){
-      const totalDur=steps.reduce((s,st)=>s+st.dur,0)*secPerBeat*1000;
-      loopTimeout=setTimeout(()=>{ if(!cancelled) runLoop(); }, totalDur-60);
+  // If a pet is currently being played, snapshot it back into the collection.
+  // It goes back as an alive entry at its own position (or appended if new).
+  if(G.started&&G.petId&&!G.afterlife){
+    // Check whether it's already in the collection (came from swapping)
+    const existingIdx=OWNER.collection.findIndex(
+      (e,i)=>i!==idx&&e.type==='alive'&&e.petId===G.petId&&e.petName===G.petName
+    );
+    const savedEntry={
+      petId:G.petId, petName:G.petName, type:'alive',
+      age:G.age, earlyDeath:false,
+      liveState:snapLiveState(),
+    };
+    if(existingIdx!==-1){
+      OWNER.collection[existingIdx]=savedEntry;
+    } else {
+      OWNER.collection.push(savedEntry);
     }
   }
-  runLoop();
-  return ()=>{ cancelled=true; if(loopTimeout) clearTimeout(loopTimeout); };
+
+  // Remove chosen entry from collection while it's being played
+  OWNER.collection.splice(idx,1);
+
+  // Restore its live state into G
+  const pet=PETS.find(p=>p.id===entry.petId)||PETS[0];
+  const ls=entry.liveState;
+  G.petId=entry.petId; G.petName=entry.petName; G.pet=pet;
+  G.hunger=ls.hunger;   G.happy=ls.happy;
+  G.clean=ls.clean;     G.energy=ls.energy;
+  G.age=ls.age;         G.ticks=ls.ticks;
+  G.hearts=ls.hearts;   G.score=ls.score;   G.coins=ls.coins;
+  G.sick=ls.sick;       G.sickTimer=ls.sickTimer;
+  G.sleeping=ls.sleeping;
+  G.lifetimeHappy=ls.lifetimeHappy; G.lifetimeTicks=ls.lifetimeTicks;
+  G.mushParts=ls.mushParts||null;
+  G.stage=getStage();
+  G.afterlife=null; G.dead=false;
+  G.frame=0; G.eyeOpen=true; G.particles=[];
+  G.action=null; G.actionF=0; G.selIcon=0; G.feedAnim=null;
+  G.playAnim=null; G.bathAnim=null; G.medAnim=null;
+  G.started=true;
+
+  // Show game UI
+  document.getElementById('setupOverlay').style.display='none';
+  document.getElementById('gameUI').style.display='flex';
+  buildGameControls();
+  gc=document.getElementById('gc'); gx=gc.getContext('2d'); gx.imageSmoothingEnabled=false;
+  sizeUI();
+  updateBars(); drawHearts(); updateIcons(); updateInfo();
+  setMsg('Welcome back, '+G.petName+'! ♥');
+  document.getElementById('screenLabel').textContent=G.petName;
+  lastTick=Date.now();
+  updateInvBtn();
+  _currentBgmKey=null; updateBgm();
 }
 
-// ── Themes ────────────────────────────────────────────────────────────────
-
-// Normal gameplay: cheery chiptune in C major
-function makeBgmNormal(){
-  const q=1, h=2, e=0.5; // quarter, half, eighth
-  return [
-    // Melody (square wave, high)
-    {notes:[{f:NOTE.E5,v:0.07,t:'square'}],dur:e},
-    {notes:[{f:NOTE.G5,v:0.07,t:'square'}],dur:e},
-    {notes:[{f:NOTE.A5,v:0.08,t:'square'}],dur:q},
-    {notes:[{f:NOTE.G5,v:0.07,t:'square'}],dur:e},
-    {notes:[{f:NOTE.E5,v:0.07,t:'square'}],dur:e},
-    {notes:[{f:NOTE.C5,v:0.07,t:'square'}],dur:q},
-    {notes:[{f:NOTE.D5,v:0.07,t:'square'}],dur:e},
-    {notes:[{f:NOTE.E5,v:0.07,t:'square'}],dur:e},
-    {notes:[{f:NOTE.F5,v:0.07,t:'square'}],dur:q},
-    {notes:[{f:NOTE.E5,v:0.07,t:'square'}],dur:e},
-    {notes:[{f:NOTE.D5,v:0.07,t:'square'}],dur:e},
-    {notes:[{f:NOTE.G5,v:0.08,t:'square'}],dur:h},
-    // bass + counter-melody interleaved
-    {notes:[{f:NOTE.C4,v:0.06,t:'triangle'},{f:NOTE.E5,v:0.06,t:'square'}],dur:e},
-    {notes:[{f:NOTE.G4,v:0.05,t:'triangle'}],dur:e},
-    {notes:[{f:NOTE.A4,v:0.05,t:'triangle'},{f:NOTE.A5,v:0.06,t:'square'}],dur:q},
-    {notes:[{f:NOTE.F4,v:0.05,t:'triangle'}],dur:e},
-    {notes:[{f:NOTE.G4,v:0.05,t:'triangle'},{f:NOTE.G5,v:0.06,t:'square'}],dur:e},
-    {notes:[{f:NOTE.C4,v:0.06,t:'triangle'},{f:NOTE.C5,v:0.07,t:'square'}],dur:h},
-    // percussion layer
-    {drum:'kick',dur:e},{dur:e},{drum:'hihat',dur:e},{dur:e},
-    {drum:'snare',dur:e},{dur:e},{drum:'hihat',dur:e},{drum:'kick',dur:e},
-  ];
-}
-
-// Angel theme: gentle, slow, sine waves in F major
-function makeBgmAngel(){
-  const q=1, h=2, e=0.5, w=4;
-  return [
-    {notes:[{f:NOTE.C5,v:0.06,t:'sine'}],dur:h},
-    {notes:[{f:NOTE.E5,v:0.06,t:'sine'}],dur:h},
-    {notes:[{f:NOTE.G5,v:0.07,t:'sine'}],dur:w},
-    {notes:[{f:NOTE.F4,v:0.04,t:'sine'},{f:NOTE.A5,v:0.05,t:'sine'}],dur:h},
-    {notes:[{f:NOTE.G4,v:0.04,t:'sine'}],dur:h},
-    {notes:[{f:NOTE.C4,v:0.05,t:'sine'},{f:NOTE.G5,v:0.06,t:'sine'}],dur:w},
-    {notes:[{f:NOTE.D5,v:0.05,t:'sine'}],dur:q},
-    {notes:[{f:NOTE.E5,v:0.06,t:'sine'}],dur:q},
-    {notes:[{f:NOTE.F5,v:0.06,t:'sine'}],dur:q},
-    {notes:[{f:NOTE.G5,v:0.06,t:'sine'}],dur:q},
-    {notes:[{f:NOTE.A5,v:0.06,t:'sine'},{f:NOTE.C4,v:0.04,t:'sine'}],dur:w},
-  ];
-}
-
-// Hell theme: aggressive, dissonant, sawtooth in minor key
-function makeBgmHell(){
-  const q=1, e=0.5, s=0.25;
-  return [
-    {notes:[{f:NOTE.A3,v:0.09,t:'sawtooth'}],dur:e},{notes:[{f:NOTE.A3,v:0.07,t:'sawtooth'}],dur:s},{notes:[{f:NOTE.Bb3,v:0.10,t:'sawtooth'}],dur:s},
-    {notes:[{f:NOTE.A3,v:0.08,t:'sawtooth'},{f:NOTE.Eb4,v:0.06,t:'sawtooth'}],dur:q},
-    {notes:[{f:NOTE.G3,v:0.08,t:'sawtooth'}],dur:e},{notes:[{f:NOTE.Ab4,v:0.07,t:'sawtooth'}],dur:e},
-    {notes:[{f:NOTE.A3,v:0.09,t:'sawtooth'},{f:NOTE.Eb4,v:0.05,t:'sawtooth'}],dur:q},
-    {drum:'kick',dur:s},{drum:'kick',dur:s},{drum:'snare',dur:e},
-    {drum:'kick',dur:s},{notes:[{f:NOTE.F2,v:0.10,t:'sawtooth'}],dur:s},{drum:'snare',dur:e},
-    {notes:[{f:NOTE.Eb4,v:0.08,t:'sawtooth'}],dur:e},{notes:[{f:NOTE.D4,v:0.08,t:'sawtooth'}],dur:e},
-    {notes:[{f:NOTE.A3,v:0.09,t:'sawtooth'},{f:NOTE.F2,v:0.08,t:'sawtooth'}],dur:q},
-    {drum:'cymbal',dur:e},{drum:'kick',dur:s},{drum:'kick',dur:s},
-  ];
-}
-
-// Concert/hard rock theme: driving riff in E
-function makeBgmConcert(){
-  const e=0.5, s=0.25, q=1;
-  return [
-    // Power chord riff
-    {notes:[{f:NOTE.E3,v:0.10,t:'sawtooth'},{f:NOTE.B3,v:0.08,t:'sawtooth'}],dur:s},
-    {notes:[{f:NOTE.E3,v:0.09,t:'sawtooth'},{f:NOTE.B3,v:0.07,t:'sawtooth'}],dur:s},
-    {notes:[{f:NOTE.G3,v:0.10,t:'sawtooth'},{f:NOTE.D4,v:0.08,t:'sawtooth'}],dur:s},
-    {notes:[{f:NOTE.E3,v:0.09,t:'sawtooth'}],dur:s},
-    {notes:[{f:NOTE.A3,v:0.10,t:'sawtooth'},{f:NOTE.E4,v:0.08,t:'sawtooth'}],dur:e},
-    {notes:[{f:NOTE.G3,v:0.09,t:'sawtooth'},{f:NOTE.D4,v:0.07,t:'sawtooth'}],dur:e},
-    {notes:[{f:NOTE.E3,v:0.10,t:'sawtooth'},{f:NOTE.B3,v:0.08,t:'sawtooth'}],dur:q},
-    // Drum pattern
-    {drum:'kick',dur:s},{dur:s},{drum:'hihat',dur:s},{dur:s},
-    {drum:'snare',dur:s},{dur:s},{drum:'hihat',dur:s},{drum:'kick',dur:s},
-    {drum:'kick',dur:s},{dur:s},{drum:'hihat',dur:s},{dur:s},
-    {drum:'snare',dur:s},{drum:'kick',dur:s},{drum:'cymbal',dur:s},{drum:'hihat',dur:s},
-    // Lead melody
-    {notes:[{f:NOTE.E5,v:0.09,t:'square'}],dur:s},{notes:[{f:NOTE.D5,v:0.08,t:'square'}],dur:s},
-    {notes:[{f:NOTE.B4,v:0.09,t:'square'}],dur:e},
-    {notes:[{f:NOTE.A4,v:0.08,t:'square'}],dur:s},{notes:[{f:NOTE.G4,v:0.08,t:'square'}],dur:s},
-    {notes:[{f:NOTE.E4,v:0.09,t:'square'}],dur:q},
-  ];
-}
-
-// ── BGM state machine ─────────────────────────────────────────────────────
-
-let _cancelBgm=null;
-let _currentBgmKey=null;
-
-function playBgm(key){
-  if(!AC||key===_currentBgmKey) return;
-  if(_cancelBgm){_cancelBgm();_cancelBgm=null;}
-  _currentBgmKey=key;
-  if(!key||sfxMuted) return;
-  let steps, bpm;
-  if(key==='normal'){steps=makeBgmNormal();bpm=BPM_NORMAL;}
-  else if(key==='angel') {steps=makeBgmAngel();bpm=BPM_ANGEL;}
-  else if(key==='hell')  {steps=makeBgmHell(); bpm=BPM_HELL;}
-  else if(key==='concert'){steps=makeBgmConcert();bpm=BPM_CONCERT;}
-  else return;
-  _cancelBgm=scheduleSeq(steps,bpm,true);
-}
-
-function stopBgm(){
-  if(_cancelBgm){_cancelBgm();_cancelBgm=null;}
-  _currentBgmKey=null;
-}
-
-// Update BGM based on game state — called from loop and key transitions
-function updateBgm(){
-  if(!AC||sfxMuted){stopBgm();return;}
-  if(concertState){playBgm('concert');return;}
-  if(G.afterlife){
-    const k=G.afterlife.type==='angel'?'angel':'hell';
-    playBgm(k);return;
-  }
-  if(G.started&&!G.dead){playBgm('normal');return;}
-  stopBgm();
-}
-
-// ── Mute toggle ───────────────────────────────────────────────────────────
-
-function toggleMute(){
-  sfxMuted=!sfxMuted;
-  if(masterGain) masterGain.gain.setTargetAtTime(sfxMuted?0:0.22,AC.currentTime,0.05);
-  const btn=document.getElementById('muteBtn');
-  if(btn) btn.textContent=sfxMuted?'🔇':'🔊';
-  if(sfxMuted){stopBgm();}
-  else{_currentBgmKey=null;updateBgm();}
-}
-
-// ── Hook audio init to first user gesture ────────────────────────────────
-// (browsers block AudioContext until a user interaction)
-function ensureAudio(){
-  initAudio();
-  if(AC&&AC.state==='suspended') AC.resume();
-}
-document.addEventListener('click',ensureAudio,{once:true});
-document.addEventListener('keydown',ensureAudio,{once:true});
-
-// ── Patch existing functions to fire SFX ─────────────────────────────────
-// (sound calls wired in below — no function wrapping needed)
-
-// Patch the game's RAF loop to detect transitions and update BGM each frame.
-let _lastAfterlife=null, _lastStage=null, _bgmTick=0;
-const _plainLoop=loop;
-loop=function(){
-  if(G.afterlife&&!_lastAfterlife){
-    ensureAudio();
-    if(G.afterlife.type==='angel') SFX.angel();
-    else SFX.hell();
-    updateBgm();
-  }
-  _lastAfterlife=G.afterlife;
-  const st=G.stage;
-  if(G.started&&st!==_lastStage&&_lastStage!==null&&!G.afterlife){
-    ensureAudio();SFX.levelUp();
-  }
-  _lastStage=st;
-  _bgmTick++;if(_bgmTick%120===0) updateBgm();
-  _plainLoop();
-};
-
-// Sick sound — periodic, triggered from game loop detection
-let _wasSick=false;
-setInterval(()=>{
-  if(G.started&&G.sick&&!_wasSick&&AC&&!sfxMuted) SFX.sick();
-  _wasSick=G.started&&G.sick;
-},4000);
-
-// ══════════════════════════════════════════════════════════════════════════
-
-
-window.addEventListener('resize',()=>sizeUI());
-window.addEventListener('orientationchange',()=>setTimeout(sizeUI,100));
-buildSetup();
-loop();
-</script>
-</body>
-</html>
+// ── CONCERT PROMPT ───────────────────────────────────────────────────────────
+// Shown after the 4th (8th, 12th…) hell ghost is collected, and also via
+// the 🎸 BAND button in the inventory. Lets the player trigger the concert
+// now or dismiss and come back later.
+function showConcertPrompt(hellPets){
+  // Remove any existing prompt first
+  const existing=document.getElementById('concertPrompt');
