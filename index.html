@@ -3154,3 +3154,481 @@ function swapToPet(idx){
 function showConcertPrompt(hellPets){
   // Remove any existing prompt first
   const existing=document.getElementById('concertPrompt');
+  if(existing) existing.remove();
+
+  const prompt=document.createElement('div');
+  prompt.id='concertPrompt';
+  prompt.style.cssText=`
+    position:fixed;inset:0;z-index:500;
+    background:rgba(4,2,8,.88);
+    display:flex;align-items:center;justify-content:center;
+    font-family:'Press Start 2P',monospace;
+  `;
+
+  // Build the band member preview row (names of the 4 hell ghosts)
+  const names=hellPets.map(p=>`<span style="color:#e04020">${p.petName.slice(0,6)}</span>`).join('<span style="color:#601010"> · </span>');
+
+  prompt.innerHTML=`
+    <div style="
+      background:#0a0408;border:2px solid #8a1818;border-radius:12px;
+      padding:clamp(14px,3vh,28px) clamp(14px,4vw,28px);
+      width:min(360px,92vw);display:flex;flex-direction:column;
+      align-items:center;gap:clamp(8px,1.8vh,16px);
+      box-shadow:0 0 40px rgba(200,20,20,.25);
+    ">
+      <div style="font-size:clamp(9px,2.2vw,16px);color:#e04020;letter-spacing:2px;text-align:center;line-height:1.8">
+        🎸 BAND ASSEMBLED! 🎸
+      </div>
+      <div style="font-size:clamp(5px,1.2vw,8px);color:#601818;text-align:center;line-height:2.2">
+        4 ANGRY SPIRITS READY TO ROCK
+      </div>
+      <div style="font-size:clamp(4px,1vw,6px);text-align:center;line-height:2.4">${names}</div>
+      <div style="font-size:clamp(4px,1vw,6px);color:#501010;text-align:center;line-height:2.2">
+        TRIGGER THE ROCK CONCERT?
+      </div>
+      <div style="display:flex;gap:10px;width:100%">
+        <button id="concertYes" style="
+          flex:1;padding:10px 4px;font-family:'Press Start 2P',monospace;
+          font-size:clamp(5px,1.2vw,8px);
+          background:#5a0808;border:2px solid #8a1818;border-radius:6px;
+          color:#ff8080;cursor:pointer;box-shadow:0 3px 0 #300404;
+          transition:background .1s;
+        ">🎸 ROCK NOW!</button>
+        <button id="concertLater" style="
+          flex:1;padding:10px 4px;font-family:'Press Start 2P',monospace;
+          font-size:clamp(5px,1.2vw,8px);
+          background:#1a1208;border:2px solid #3a2208;border-radius:6px;
+          color:#6a5020;cursor:pointer;box-shadow:0 3px 0 #0a0804;
+          transition:background .1s;
+        ">LATER...</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(prompt);
+
+  document.getElementById('concertYes').onclick=()=>{
+    prompt.remove();
+    ensureAudio();
+    startConcert(hellPets);
+  };
+  document.getElementById('concertLater').onclick=()=>{
+    prompt.remove();
+    updateInvBtn();
+  };
+
+  // Hover states
+  const yes=document.getElementById('concertYes');
+  const later=document.getElementById('concertLater');
+  yes.onmouseenter=()=>{yes.style.background='#7a1010';};
+  yes.onmouseleave=()=>{yes.style.background='#5a0808';};
+  later.onmouseenter=()=>{later.style.background='#2a1e0a';};
+  later.onmouseleave=()=>{later.style.background='#1a1208';};
+}
+
+function startConcert(bandPets){
+  ensureAudio();SFX.concert();
+  const ov=document.getElementById('concertOverlay');
+  const cv=document.getElementById('concertCanvas');
+  if(!ov||!cv) return;
+  const scale=Math.min(Math.floor(window.innerWidth/240),Math.floor(window.innerHeight/160),4)||1;
+  cv.style.width=(240*scale)+'px';cv.style.height=(160*scale)+'px';
+  ov.style.display='flex';
+  concertState={frame:0,band:bandPets,cx:cv.getContext('2d')};
+  concertState.cx.imageSmoothingEnabled=false;
+  function tick(){
+    drawConcert(concertState);
+    concertState.frame++;
+    concertRaf=requestAnimationFrame(tick);
+  }
+  setTimeout(()=>{_currentBgmKey=null;updateBgm();},600);
+  tick();
+}
+
+function endConcert(){
+  if(concertRaf) cancelAnimationFrame(concertRaf);
+  concertRaf=null;concertState=null;
+  document.getElementById('concertOverlay').style.display='none';
+  stopBgm();_currentBgmKey=null;
+  setTimeout(()=>updateBgm(),200);
+}
+
+function tryCollectLive(){
+  if(!G.started||G.afterlife) return;
+  showCollectUI();
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// MIDI-STYLE SOUND ENGINE  (Web Audio API — no external deps)
+// ══════════════════════════════════════════════════════════════════════════
+
+let AC=null;          // AudioContext — created on first interaction
+let masterGain=null;  // master volume node
+let bgmNode=null;     // current background music scheduler timeout id
+let bgmSeq=null;      // current sequence descriptor
+let sfxMuted=false;   // toggled by the 🔊 button
+const NOTE={         // MIDI note → frequency
+  C3:130.81,D3:146.83,E3:164.81,F3:174.61,G3:196,A3:220,B3:246.94,
+  C4:261.63,D4:293.66,E4:329.63,F4:349.23,G4:392,A4:440,B4:493.88,
+  C5:523.25,D5:587.33,E5:659.25,F5:698.46,G5:783.99,A5:880,B5:987.77,
+  C6:1046.5,D6:1174.66,E6:1318.5,
+  Bb3:233.08,Eb4:311.13,Ab4:415.30,Bb4:466.16,Eb5:622.25,Ab5:830.61,
+  F2:87.31,G2:98,A2:110,B2:123.47,
+};
+
+function initAudio(){
+  if(AC) return;
+  AC=new(window.AudioContext||window.webkitAudioContext)();
+  masterGain=AC.createGain();
+  masterGain.gain.value=sfxMuted?0:0.22;
+  masterGain.connect(AC.destination);
+}
+
+// ── Low-level tone helpers ────────────────────────────────────────────────
+
+function playTone(freq,dur,vol,type,startTime,detune){
+  if(!AC||sfxMuted) return;
+  const t=startTime||AC.currentTime;
+  const o=AC.createOscillator();
+  const g=AC.createGain();
+  o.type=type||'square';
+  o.frequency.setValueAtTime(freq,t);
+  if(detune) o.detune.setValueAtTime(detune,t);
+  // Envelope: attack 5ms, hold, release 30ms
+  g.gain.setValueAtTime(0,t);
+  g.gain.linearRampToValueAtTime(vol,t+0.005);
+  g.gain.setValueAtTime(vol,t+dur-0.03);
+  g.gain.linearRampToValueAtTime(0,t+dur);
+  o.connect(g);g.connect(masterGain);
+  o.start(t);o.stop(t+dur+0.01);
+}
+
+function playDrum(type,startTime){
+  if(!AC||sfxMuted) return;
+  const t=startTime||AC.currentTime;
+  if(type==='kick'){
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type='sine';o.frequency.setValueAtTime(150,t);
+    o.frequency.exponentialRampToValueAtTime(40,t+0.12);
+    g.gain.setValueAtTime(0.6,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.18);
+    o.connect(g);g.connect(masterGain);o.start(t);o.stop(t+0.2);
+  } else if(type==='snare'){
+    const buf=AC.createBuffer(1,AC.sampleRate*0.12,AC.sampleRate);
+    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1);
+    const src=AC.createBufferSource(),g=AC.createGain();
+    const filt=AC.createBiquadFilter();filt.type='bandpass';filt.frequency.value=3500;
+    src.buffer=buf;g.gain.setValueAtTime(0.25,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.12);
+    src.connect(filt);filt.connect(g);g.connect(masterGain);src.start(t);src.stop(t+0.13);
+  } else if(type==='hihat'){
+    const buf=AC.createBuffer(1,AC.sampleRate*0.05,AC.sampleRate);
+    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1);
+    const src=AC.createBufferSource(),g=AC.createGain();
+    const filt=AC.createBiquadFilter();filt.type='highpass';filt.frequency.value=8000;
+    src.buffer=buf;g.gain.setValueAtTime(0.12,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.05);
+    src.connect(filt);filt.connect(g);g.connect(masterGain);src.start(t);src.stop(t+0.06);
+  } else if(type==='cymbal'){
+    const buf=AC.createBuffer(1,AC.sampleRate*0.3,AC.sampleRate);
+    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1);
+    const src=AC.createBufferSource(),g=AC.createGain();
+    const filt=AC.createBiquadFilter();filt.type='highpass';filt.frequency.value=6000;
+    src.buffer=buf;g.gain.setValueAtTime(0.18,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.3);
+    src.connect(filt);filt.connect(g);g.connect(masterGain);src.start(t);src.stop(t+0.32);
+  }
+}
+
+// ── SFX library ───────────────────────────────────────────────────────────
+
+const SFX={
+  btn:()=>{
+    playTone(NOTE.G5,0.04,0.15,'square');
+    playTone(NOTE.C6,0.06,0.12,'square',AC.currentTime+0.04);
+  },
+  feed:()=>{
+    [NOTE.C5,NOTE.E5,NOTE.G5,NOTE.C6].forEach((f,i)=>
+      playTone(f,0.09,0.13,'triangle',AC.currentTime+i*0.07));
+  },
+  play:()=>{
+    [NOTE.C5,NOTE.E5,NOTE.G5,NOTE.E5,NOTE.C6].forEach((f,i)=>
+      playTone(f,0.08,0.14,'square',AC.currentTime+i*0.06));
+  },
+  bath:()=>{
+    // gentle bubble arp
+    [NOTE.G4,NOTE.B4,NOTE.D5,NOTE.G5].forEach((f,i)=>
+      playTone(f,0.12,0.10,'sine',AC.currentTime+i*0.09));
+  },
+  sleep:()=>{
+    playTone(NOTE.G4,0.2,0.08,'sine');
+    playTone(NOTE.E4,0.3,0.07,'sine',AC.currentTime+0.18);
+    playTone(NOTE.C4,0.5,0.06,'sine',AC.currentTime+0.44);
+  },
+  sick:()=>{
+    playTone(NOTE.C5,0.08,0.12,'sawtooth');
+    playTone(NOTE.Bb3,0.16,0.10,'sawtooth',AC.currentTime+0.08);
+  },
+  med:()=>{
+    [NOTE.C5,NOTE.G5,NOTE.C6].forEach((f,i)=>
+      playTone(f,0.07,0.14,'square',AC.currentTime+i*0.08));
+  },
+  levelUp:()=>{
+    [NOTE.C5,NOTE.E5,NOTE.G5,NOTE.C6,NOTE.E6].forEach((f,i)=>
+      playTone(f,0.12,0.18,'square',AC.currentTime+i*0.08));
+  },
+  death:()=>{
+    [NOTE.C5,NOTE.B4,NOTE.Bb3,NOTE.A3,NOTE.G3].forEach((f,i)=>
+      playTone(f,0.14,0.16,'sawtooth',AC.currentTime+i*0.1));
+  },
+  angel:()=>{
+    // ascending harp gliss
+    [NOTE.C5,NOTE.E5,NOTE.G5,NOTE.C6,NOTE.E6].forEach((f,i)=>{
+      playTone(f,0.2,0.14,'sine',AC.currentTime+i*0.1);
+      playTone(f*2,0.1,0.06,'sine',AC.currentTime+i*0.1+0.04);
+    });
+  },
+  hell:()=>{
+    // descending evil chord
+    [NOTE.C5,NOTE.Eb4,NOTE.A3,NOTE.F2].forEach((f,i)=>
+      playTone(f,0.25,0.18,'sawtooth',AC.currentTime+i*0.08));
+    setTimeout(()=>{
+      playDrum('kick');
+      playTone(NOTE.F2,0.4,0.2,'sawtooth',AC.currentTime+0.02);
+    },300);
+  },
+  collect:()=>{
+    playTone(NOTE.G5,0.05,0.15,'square');
+    playTone(NOTE.C6,0.05,0.15,'square',AC.currentTime+0.05);
+    playTone(NOTE.E6,0.12,0.18,'square',AC.currentTime+0.10);
+  },
+  concert:()=>{
+    // power chord crash
+    [NOTE.E3,NOTE.B3,NOTE.E4,NOTE.G4].forEach((f,i)=>{
+      playTone(f,0.4,0.18,'sawtooth',AC.currentTime+i*0.015);
+    });
+    playDrum('kick');playDrum('cymbal',AC.currentTime+0.02);
+  },
+};
+
+// ── Background Music Sequencer ────────────────────────────────────────────
+// Each theme is an array of {notes:[{f,dur,vol,type}], bpm, repeat}
+
+const BPM_NORMAL=140, BPM_ANGEL=80, BPM_HELL=160, BPM_CONCERT=180;
+
+// Helper: schedule a sequence of step-time notes onto the master gain
+// Returns a cancel function
+function scheduleSeq(steps, bpm, loop, onBar){
+  if(!AC) return ()=>{};
+  const secPerBeat=60/bpm;
+  let cancelled=false;
+  let loopTimeout=null;
+
+  function runLoop(){
+    if(cancelled) return;
+    let t=AC.currentTime+0.05; // small lookahead
+    steps.forEach(step=>{
+      const dur=step.dur*secPerBeat;
+      if(step.drum){
+        // schedule drum hit via timeout (imprecise but fine for BGM feel)
+        const delay=(t-AC.currentTime)*1000;
+        if(!cancelled) setTimeout(()=>{ if(!cancelled&&!sfxMuted) playDrum(step.drum); }, Math.max(0,delay));
+      } else if(step.notes){
+        step.notes.forEach(n=>{
+          if(!cancelled) playTone(n.f, dur*0.85, n.v||0.08, n.t||'square', t, n.det||0);
+        });
+      }
+      t+=dur;
+    });
+    if(loop&&!cancelled){
+      const totalDur=steps.reduce((s,st)=>s+st.dur,0)*secPerBeat*1000;
+      loopTimeout=setTimeout(()=>{ if(!cancelled) runLoop(); }, totalDur-60);
+    }
+  }
+  runLoop();
+  return ()=>{ cancelled=true; if(loopTimeout) clearTimeout(loopTimeout); };
+}
+
+// ── Themes ────────────────────────────────────────────────────────────────
+
+// Normal gameplay: cheery chiptune in C major
+function makeBgmNormal(){
+  const q=1, h=2, e=0.5; // quarter, half, eighth
+  return [
+    // Melody (square wave, high)
+    {notes:[{f:NOTE.E5,v:0.07,t:'square'}],dur:e},
+    {notes:[{f:NOTE.G5,v:0.07,t:'square'}],dur:e},
+    {notes:[{f:NOTE.A5,v:0.08,t:'square'}],dur:q},
+    {notes:[{f:NOTE.G5,v:0.07,t:'square'}],dur:e},
+    {notes:[{f:NOTE.E5,v:0.07,t:'square'}],dur:e},
+    {notes:[{f:NOTE.C5,v:0.07,t:'square'}],dur:q},
+    {notes:[{f:NOTE.D5,v:0.07,t:'square'}],dur:e},
+    {notes:[{f:NOTE.E5,v:0.07,t:'square'}],dur:e},
+    {notes:[{f:NOTE.F5,v:0.07,t:'square'}],dur:q},
+    {notes:[{f:NOTE.E5,v:0.07,t:'square'}],dur:e},
+    {notes:[{f:NOTE.D5,v:0.07,t:'square'}],dur:e},
+    {notes:[{f:NOTE.G5,v:0.08,t:'square'}],dur:h},
+    // bass + counter-melody interleaved
+    {notes:[{f:NOTE.C4,v:0.06,t:'triangle'},{f:NOTE.E5,v:0.06,t:'square'}],dur:e},
+    {notes:[{f:NOTE.G4,v:0.05,t:'triangle'}],dur:e},
+    {notes:[{f:NOTE.A4,v:0.05,t:'triangle'},{f:NOTE.A5,v:0.06,t:'square'}],dur:q},
+    {notes:[{f:NOTE.F4,v:0.05,t:'triangle'}],dur:e},
+    {notes:[{f:NOTE.G4,v:0.05,t:'triangle'},{f:NOTE.G5,v:0.06,t:'square'}],dur:e},
+    {notes:[{f:NOTE.C4,v:0.06,t:'triangle'},{f:NOTE.C5,v:0.07,t:'square'}],dur:h},
+    // percussion layer
+    {drum:'kick',dur:e},{dur:e},{drum:'hihat',dur:e},{dur:e},
+    {drum:'snare',dur:e},{dur:e},{drum:'hihat',dur:e},{drum:'kick',dur:e},
+  ];
+}
+
+// Angel theme: gentle, slow, sine waves in F major
+function makeBgmAngel(){
+  const q=1, h=2, e=0.5, w=4;
+  return [
+    {notes:[{f:NOTE.C5,v:0.06,t:'sine'}],dur:h},
+    {notes:[{f:NOTE.E5,v:0.06,t:'sine'}],dur:h},
+    {notes:[{f:NOTE.G5,v:0.07,t:'sine'}],dur:w},
+    {notes:[{f:NOTE.F4,v:0.04,t:'sine'},{f:NOTE.A5,v:0.05,t:'sine'}],dur:h},
+    {notes:[{f:NOTE.G4,v:0.04,t:'sine'}],dur:h},
+    {notes:[{f:NOTE.C4,v:0.05,t:'sine'},{f:NOTE.G5,v:0.06,t:'sine'}],dur:w},
+    {notes:[{f:NOTE.D5,v:0.05,t:'sine'}],dur:q},
+    {notes:[{f:NOTE.E5,v:0.06,t:'sine'}],dur:q},
+    {notes:[{f:NOTE.F5,v:0.06,t:'sine'}],dur:q},
+    {notes:[{f:NOTE.G5,v:0.06,t:'sine'}],dur:q},
+    {notes:[{f:NOTE.A5,v:0.06,t:'sine'},{f:NOTE.C4,v:0.04,t:'sine'}],dur:w},
+  ];
+}
+
+// Hell theme: aggressive, dissonant, sawtooth in minor key
+function makeBgmHell(){
+  const q=1, e=0.5, s=0.25;
+  return [
+    {notes:[{f:NOTE.A3,v:0.09,t:'sawtooth'}],dur:e},{notes:[{f:NOTE.A3,v:0.07,t:'sawtooth'}],dur:s},{notes:[{f:NOTE.Bb3,v:0.10,t:'sawtooth'}],dur:s},
+    {notes:[{f:NOTE.A3,v:0.08,t:'sawtooth'},{f:NOTE.Eb4,v:0.06,t:'sawtooth'}],dur:q},
+    {notes:[{f:NOTE.G3,v:0.08,t:'sawtooth'}],dur:e},{notes:[{f:NOTE.Ab4,v:0.07,t:'sawtooth'}],dur:e},
+    {notes:[{f:NOTE.A3,v:0.09,t:'sawtooth'},{f:NOTE.Eb4,v:0.05,t:'sawtooth'}],dur:q},
+    {drum:'kick',dur:s},{drum:'kick',dur:s},{drum:'snare',dur:e},
+    {drum:'kick',dur:s},{notes:[{f:NOTE.F2,v:0.10,t:'sawtooth'}],dur:s},{drum:'snare',dur:e},
+    {notes:[{f:NOTE.Eb4,v:0.08,t:'sawtooth'}],dur:e},{notes:[{f:NOTE.D4,v:0.08,t:'sawtooth'}],dur:e},
+    {notes:[{f:NOTE.A3,v:0.09,t:'sawtooth'},{f:NOTE.F2,v:0.08,t:'sawtooth'}],dur:q},
+    {drum:'cymbal',dur:e},{drum:'kick',dur:s},{drum:'kick',dur:s},
+  ];
+}
+
+// Concert/hard rock theme: driving riff in E
+function makeBgmConcert(){
+  const e=0.5, s=0.25, q=1;
+  return [
+    // Power chord riff
+    {notes:[{f:NOTE.E3,v:0.10,t:'sawtooth'},{f:NOTE.B3,v:0.08,t:'sawtooth'}],dur:s},
+    {notes:[{f:NOTE.E3,v:0.09,t:'sawtooth'},{f:NOTE.B3,v:0.07,t:'sawtooth'}],dur:s},
+    {notes:[{f:NOTE.G3,v:0.10,t:'sawtooth'},{f:NOTE.D4,v:0.08,t:'sawtooth'}],dur:s},
+    {notes:[{f:NOTE.E3,v:0.09,t:'sawtooth'}],dur:s},
+    {notes:[{f:NOTE.A3,v:0.10,t:'sawtooth'},{f:NOTE.E4,v:0.08,t:'sawtooth'}],dur:e},
+    {notes:[{f:NOTE.G3,v:0.09,t:'sawtooth'},{f:NOTE.D4,v:0.07,t:'sawtooth'}],dur:e},
+    {notes:[{f:NOTE.E3,v:0.10,t:'sawtooth'},{f:NOTE.B3,v:0.08,t:'sawtooth'}],dur:q},
+    // Drum pattern
+    {drum:'kick',dur:s},{dur:s},{drum:'hihat',dur:s},{dur:s},
+    {drum:'snare',dur:s},{dur:s},{drum:'hihat',dur:s},{drum:'kick',dur:s},
+    {drum:'kick',dur:s},{dur:s},{drum:'hihat',dur:s},{dur:s},
+    {drum:'snare',dur:s},{drum:'kick',dur:s},{drum:'cymbal',dur:s},{drum:'hihat',dur:s},
+    // Lead melody
+    {notes:[{f:NOTE.E5,v:0.09,t:'square'}],dur:s},{notes:[{f:NOTE.D5,v:0.08,t:'square'}],dur:s},
+    {notes:[{f:NOTE.B4,v:0.09,t:'square'}],dur:e},
+    {notes:[{f:NOTE.A4,v:0.08,t:'square'}],dur:s},{notes:[{f:NOTE.G4,v:0.08,t:'square'}],dur:s},
+    {notes:[{f:NOTE.E4,v:0.09,t:'square'}],dur:q},
+  ];
+}
+
+// ── BGM state machine ─────────────────────────────────────────────────────
+
+let _cancelBgm=null;
+let _currentBgmKey=null;
+
+function playBgm(key){
+  if(!AC||key===_currentBgmKey) return;
+  if(_cancelBgm){_cancelBgm();_cancelBgm=null;}
+  _currentBgmKey=key;
+  if(!key||sfxMuted) return;
+  let steps, bpm;
+  if(key==='normal'){steps=makeBgmNormal();bpm=BPM_NORMAL;}
+  else if(key==='angel') {steps=makeBgmAngel();bpm=BPM_ANGEL;}
+  else if(key==='hell')  {steps=makeBgmHell(); bpm=BPM_HELL;}
+  else if(key==='concert'){steps=makeBgmConcert();bpm=BPM_CONCERT;}
+  else return;
+  _cancelBgm=scheduleSeq(steps,bpm,true);
+}
+
+function stopBgm(){
+  if(_cancelBgm){_cancelBgm();_cancelBgm=null;}
+  _currentBgmKey=null;
+}
+
+// Update BGM based on game state — called from loop and key transitions
+function updateBgm(){
+  if(!AC||sfxMuted){stopBgm();return;}
+  if(concertState){playBgm('concert');return;}
+  if(G.afterlife){
+    const k=G.afterlife.type==='angel'?'angel':'hell';
+    playBgm(k);return;
+  }
+  if(G.started&&!G.dead){playBgm('normal');return;}
+  stopBgm();
+}
+
+// ── Mute toggle ───────────────────────────────────────────────────────────
+
+function toggleMute(){
+  sfxMuted=!sfxMuted;
+  if(masterGain) masterGain.gain.setTargetAtTime(sfxMuted?0:0.22,AC.currentTime,0.05);
+  const btn=document.getElementById('muteBtn');
+  if(btn) btn.textContent=sfxMuted?'🔇':'🔊';
+  if(sfxMuted){stopBgm();}
+  else{_currentBgmKey=null;updateBgm();}
+}
+
+// ── Hook audio init to first user gesture ────────────────────────────────
+// (browsers block AudioContext until a user interaction)
+function ensureAudio(){
+  initAudio();
+  if(AC&&AC.state==='suspended') AC.resume();
+}
+document.addEventListener('click',ensureAudio,{once:true});
+document.addEventListener('keydown',ensureAudio,{once:true});
+
+// ── Patch existing functions to fire SFX ─────────────────────────────────
+// (sound calls wired in below — no function wrapping needed)
+
+// Patch the game's RAF loop to detect transitions and update BGM each frame.
+let _lastAfterlife=null, _lastStage=null, _bgmTick=0;
+const _plainLoop=loop;
+loop=function(){
+  if(G.afterlife&&!_lastAfterlife){
+    ensureAudio();
+    if(G.afterlife.type==='angel') SFX.angel();
+    else SFX.hell();
+    updateBgm();
+  }
+  _lastAfterlife=G.afterlife;
+  const st=G.stage;
+  if(G.started&&st!==_lastStage&&_lastStage!==null&&!G.afterlife){
+    ensureAudio();SFX.levelUp();
+  }
+  _lastStage=st;
+  _bgmTick++;if(_bgmTick%120===0) updateBgm();
+  _plainLoop();
+};
+
+// Sick sound — periodic, triggered from game loop detection
+let _wasSick=false;
+setInterval(()=>{
+  if(G.started&&G.sick&&!_wasSick&&AC&&!sfxMuted) SFX.sick();
+  _wasSick=G.started&&G.sick;
+},4000);
+
+// ══════════════════════════════════════════════════════════════════════════
+
+
+window.addEventListener('resize',()=>sizeUI());
+window.addEventListener('orientationchange',()=>setTimeout(sizeUI,100));
+buildSetup();
+loop();
+</script>
+</body>
+</html>
