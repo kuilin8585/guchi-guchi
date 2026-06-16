@@ -502,6 +502,10 @@ function resetForNewPet(){
   G.lifetimeHappy=0;G.lifetimeTicks=0;G.afterlife=null;
   clearAnimLabel();
   const ro=document.getElementById('receiptOverlay');if(ro)ro.remove();
+  const co=document.getElementById('collectOverlay');if(co)co.remove();
+  const mo=document.getElementById('medChoiceOverlay');if(mo)mo.remove();
+  // Clear the game canvas so the old afterlife frame doesn't stay frozen
+  if(gc&&gx){gx.fillStyle='#8db06b';gx.fillRect(0,0,gc.width,gc.height);}
   // Go back to setup screen
   document.getElementById('gameUI').style.display='none';
   document.getElementById('setupOverlay').style.display='flex';
