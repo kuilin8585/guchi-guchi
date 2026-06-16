@@ -496,7 +496,7 @@ function resetForNewPet(){
   G.age=0;G.score=0;G.coins=200;G.sleeping=false;
   G.frame=0;G.eyeOpen=true;G.particles=[];G.dead=false;G.hearts=3;
   G.ticks=0;G.sick=false;G.sickTimer=0;
-  G.action=null;G.actionF=0;G.selIcon=0;
+  G.action=null;G.actionF=0;G.selIcon=0;idleTimer=0;
   G.petId=null;G.petName='';G.pet=null;G.stage='egg';G.mushParts=null;
   G.started=false;G.feedAnim=null;G.playAnim=null;G.bathAnim=null;G.medAnim=null;
   G.lifetimeHappy=0;G.lifetimeTicks=0;G.afterlife=null;
@@ -693,7 +693,7 @@ function getCols(t){if(!G.pet)return{body:'#d4b896',ear:'#c09878',belly:'#ece0c8
 let gc,gx;
 function px(x,y,c){if(x<0||x>=72||y<0||y>=55)return;gx.fillStyle=c;gx.fillRect(x,y,1,1);}
 function rect(x,y,w,h,c){gx.fillStyle=c;gx.fillRect(x,y,w,h);}
-function clr(){gx.fillStyle='#8db06b';gx.fillRect(0,0,72,55);}
+function clr(){gx.globalAlpha=1;gx.globalCompositeOperation='source-over';gx.fillStyle='#8db06b';gx.fillRect(0,0,72,55);}
 
 // ── Animation label helpers — HTML overlay for crisp webfont text ──────────
 function setAnimLabel(text, color){
@@ -2018,6 +2018,7 @@ function drawAfterlife(){
     rect(30,24,3,3,'#ffaa00');rect(35,24,3,3,'#ffaa00');
     px(31,25,'#ff0000');px(36,25,'#ff0000');
     // Snarling teeth
+    const hc='#3a0000';
     rect(30,30,8,2,hc);
     for(let i=0;i<4;i++){px(30+i*2,31,'#ffffff');px(31+i*2,30,hc);}
     // Rage flames around ghost
@@ -2205,6 +2206,7 @@ function showB(){
 
 let lastTick=Date.now(),idleTimer=0;
 function loop(){
+  try{
   G.frame++;
   if(G.frame%20===0)G.eyeOpen=false;
   if(G.frame%20===3)G.eyeOpen=true;
@@ -2246,6 +2248,7 @@ function loop(){
     if(idleTimer>150&&!G.action){idleTimer=0;if(Math.random()<0.4)setMsg(G.petId==='shark'?rnd(MSGS.shark):G.petId==='mush'?rnd(MSGS.mush):rnd(MSGS.happy));}
   }
   if(G.started)drawScene();
+  }catch(e){console.error('loop error:',e);}
   requestAnimationFrame(loop);
 }
 
@@ -3034,19 +3037,26 @@ function startGame(){
   ensureAudio();SFX.btn();
   const ni=document.getElementById('nameInp');
   G.petName=(ni.value.trim()||'GUCHI GUCHI').toUpperCase().slice(0,10);
-  G.stage='egg';G.started=true;
+  G.stage='egg';
   if(G.petId==='mush')G.mushParts=buildMushParts();
   document.getElementById('setupOverlay').style.display='none';
   document.getElementById('gameUI').style.display='flex';
   buildGameControls();
+  // Assign canvas BEFORE setting G.started so the RAF loop never draws with a stale context
   gc=document.getElementById('gc');gx=gc.getContext('2d');gx.imageSmoothingEnabled=false;
+  gx.globalAlpha=1;gx.globalCompositeOperation='source-over';
+  G.started=true;
   sizeUI();
   updateBars();drawHearts();updateIcons();updateInfo();
   setMsg('Hello! I am '+G.petName+'!');
   document.getElementById('screenLabel').textContent=G.petName;
+  // Reset BGM patch state so the new pet starts clean
+  _lastAfterlife=null;_lastStage=null;
   lastTick=Date.now();
   updateInvBtn();
   updateBgm();
+  // Force an immediate first draw so the egg appears right away
+  drawScene();
 }
 
 function snapLiveState(){
@@ -3602,6 +3612,7 @@ document.addEventListener('keydown',ensureAudio,{once:true});
 let _lastAfterlife=null, _lastStage=null, _bgmTick=0;
 const _plainLoop=loop;
 loop=function(){
+  try{
   if(G.afterlife&&!_lastAfterlife){
     ensureAudio();
     if(G.afterlife.type==='angel') SFX.angel();
@@ -3616,6 +3627,7 @@ loop=function(){
   _lastStage=st;
   _bgmTick++;if(_bgmTick%120===0) updateBgm();
   _plainLoop();
+  }catch(e){console.error('loop wrapper error:',e);requestAnimationFrame(loop);}
 };
 
 // Sick sound — periodic, triggered from game loop detection
