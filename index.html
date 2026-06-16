@@ -2230,10 +2230,9 @@ function loop(){
         if(G.sick){G.sickTimer--;if(G.sickTimer<=0)G.sick=false;}
         const mn=Math.min(G.hunger,G.happy,G.clean,G.energy);
         if(mn<15){G.hearts=Math.max(0,G.hearts-1);if(G.hearts<=0){
-          const avg2=G.lifetimeTicks>0?G.lifetimeHappy/G.lifetimeTicks:30;
-          const dtype=avg2<35?'hell':'ghost';
+          const dtype='hell';
           G.afterlife={type:dtype,frame:0,petId:G.petId,earlyDeath:true};
-          setMsg(dtype==='hell'?G.petName+' died in rage!! ;;':G.petName+' faded away... ;;');
+          setMsg(G.petName+' died in rage!! ;;');
           showCollectUI();
         } else setMsg(G.sick?rnd(MSGS.sick):G.hunger===mn?rnd(MSGS.hungry):G.happy===mn?rnd(MSGS.unhappy):G.clean===mn?rnd(MSGS.dirty):rnd(MSGS.tired));}
         updateBars();drawHearts();updateInfo();
